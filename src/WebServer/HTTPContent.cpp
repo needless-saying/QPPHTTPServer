@@ -7,15 +7,125 @@
 */
 
 #include "StdAfx.h"
-#include "HTTPContent.h"
-#include "HTTPDef.h"
-#include <io.h>
 #include <assert.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <io.h>
+
+#include "HTTPLib.h"
+#include "HTTPContent.h"
+#include "Pipes/FilePipe.h"
+#include "Pipes/BufferPipe.h"
+
+static void get_content_type_from_filename(std::string& strType, const char* pszFileName)
+{
+	strType = "application/octet-stream";
+
+	const char *pExt = strrchr(pszFileName, '.');
+	if(pExt && strlen(pExt) < 1024)
+	{
+		char szExt[1025];
+		strcpy(szExt, pExt + 1);
+
+		if(stricmp(szExt, "jpg") == 0)
+		{
+			strType =  "image/jpeg";
+		}
+		else if(stricmp(szExt, "txt") == 0)
+		{
+			strType = "text/plain";
+		}
+		else if(stricmp(szExt, "htm") == 0)
+		{
+			strType = "text/html";
+		}
+		else if(stricmp(szExt, "html") == 0)
+		{
+			strType = "text/html";
+		}
+		else if(stricmp(szExt, "gif") == 0)
+		{
+			strType = "image/gif";
+		}
+		else if(stricmp(szExt, "png") == 0)
+		{
+			strType = "image/png";
+		}
+		else if(stricmp(szExt, "bmp") == 0)
+		{
+			strType = "image/x-xbitmap";
+		}
+		else
+		{
+		}
+	}
+}
+
+static void map_content_type_string(std::string& strType, int t)
+{
+	strType = "application/octet-stream";
+
+	if(t == CONTENT_TYPE_BINARY)
+	{
+	}
+	else if(CONTENT_TYPE_TEXT == t)
+	{
+		strType = "text/plain";
+	}
+	else if(CONTENT_TYPE_HTML == t)
+	{
+		strType = "text/html";
+	}
+	else
+	{
+	}
+}
+
+static void format_range(std::string& str, __int64 fr, __int64 to, __int64 sz)
+{
+	char szRanges[300] = {0};
+	if(fr < 0) fr = 0;
+	if(fr >= sz) fr = sz - 1;
+	if(to < 0) to = sz - 1;
+	if(to >= sz) to = sz - 1;
+	sprintf(szRanges, "bytes %lld-%lld/%lld", fr, to, sz);
+	str = szRanges;
+}
+
+static void build_etag_string(std::string str, const void* buf, size_t len)
+{
+	char szLength[201] = {0};
+	ltoa(len, szLength, 10);
+
+	// 如果是内存数据, 根据大小和取若干个字节的16进制字符创建.
+	unsigned char szValue[ETAG_BYTE_SIZE + 1];
+	for(int i = 0; i < ETAG_BYTE_SIZE; ++i)
+	{
+		szValue[i] = ((const char*)buf)[(len / ETAG_BYTE_SIZE) * i];
+	}
+
+	str = to_hex(szValue, ETAG_BYTE_SIZE);
+	str += ":";
+	str += szLength;
+}
+
+static void build_etag_string(std::string& str, struct _stat64 *fileInf)
+{
+	char szLength[201] = {0};
+	_i64toa(fileInf->st_size, szLength, 10);
+
+	// 根据文件大小和修改日期创建. [ETag: ec5ee54c00000000:754998030] 修改时间的HEX值:文件长度
+	// 确保同一个资源的 ETag 是同一个值.
+	// 即使客户端请求的只是这个资源的一部分.
+	// 断点续传客户端根据 ETag 的值确定下载的几个部分是不是同一个文件.
+	str = to_hex((const unsigned char*)&(fileInf->st_mtime), sizeof(fileInf->st_mtime));
+	str += ":";
+	str += szLength;
+}
 
 HTTPContent::HTTPContent()
-	: _openType(OPEN_NONE), _contentType(""), _fileName(""), _from(0), _to(0)
+	: _content(NULL), _contentLength(0), _acceptRanges(true)
 {
-	memset(&_fileInf, 0, sizeof(_fileInf));
 }
 
 HTTPContent::~HTTPContent()
@@ -25,52 +135,43 @@ HTTPContent::~HTTPContent()
 
 bool HTTPContent::open(const std::string &fileName, __int64 from, __int64 to)
 {
-	if(OPEN_NONE != _openType) return false;
-	std::string strFileName = fileName;
-
-	_file.open(AtoT(strFileName).c_str(), WINFile::r);
-	//_file = fopen(strFileName.c_str(), "rb");
-	//if(NULL == _file)
-	if(!_file.isopen())
+	assert(_content == NULL);
+	struct _stat64 fileInf;
+	if( 0 != _stat64(fileName.c_str(), &fileInf))
 	{
+		return false;
 	}
 	else
 	{
-		if( 0 != _stat32i64(strFileName.c_str(), &_fileInf))
-		{
-			assert(0);
-		}
+		_content = new FilePipe(fileName, from, to);
 
-		__int64 fileSize = _fileInf.st_size;
-
-		_openType = OPEN_FILE;
-		_fileName = fileName;
-			
-		_from = from;
-		_to = to;
-			
-		// lFrom 应该大于0且小于文件的长度
-		if(_from > 0 && _from < fileSize)
-		{
-			//_fseeki64(_file, _from, SEEK_SET);
-			_file.seek(_from, WINFile::s_set);
-		}
-		else
-		{
-			_from = 0;
-		}
-			
-		// lTo 应该大于等于 lFrom且小于文件的长度.
-		if(_to >= _from && _to <  fileSize)
-		{
-		}
-		else
-		{
-			_to = fileSize - 1;
-		}
+		get_content_type_from_filename(_contentType, fileName.c_str());
+		format_range(_contentRange, from, to, fileInf.st_size);
+		build_etag_string(_etag, &fileInf);
+		_contentLength = fileInf.st_size;
+		_lastModify = format_http_date(&fileInf.st_mtime);
+		_acceptRanges = true;
+		
+		return true;
 	}
+}
 
-	return OPEN_NONE != _openType;
+bool HTTPContent::open(const char* buf, size_t len, int type)
+{
+	assert(_content == NULL);
+	__int64 ltime;
+	_time64(&ltime);
+
+	_content = new BufferPipe(len + 1, len);
+	_content->write(buf, len);
+	
+	map_content_type_string(_contentType, type);
+	format_range(_contentRange, 0, len - 1, len);
+	build_etag_string(_etag, buf, len);
+	_contentLength = len;
+	_lastModify = format_http_date(&ltime);
+	_acceptRanges = false;
+	return true;
 }
 
 /*
@@ -78,21 +179,21 @@ bool HTTPContent::open(const std::string &fileName, __int64 from, __int64 to)
 */
 bool HTTPContent::open(const std::string &urlStr, const std::string &filePath)
 {
-	if(OPEN_NONE != _openType) return false;
-	assert(_memfile.fsize() == 0);
-
+	assert(_content == NULL);
 	char buffer[_MAX_PATH + 100] = {0};
 	char sizeBuf[_MAX_PATH + 100] = {0};
 
-	// 生成一个UTF8 HTML文本流,包含了文件列表.
+	// 创建缓存,生成一个UTF8 HTML文本流,包含了文件列表.
+	BufferPipe* bp = new BufferPipe(MAX_DIRECTORY_LIST_SIZE, 2 * K_BYTES);
+	_content = bp;
 	
 	// 1. 输出HTML头,并指定UTF-8编码格式
-	writeString("<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/></head>");
-	writeString("<body>");
+	puts("<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/></head>");
+	puts("<body>");
 
 	// 2. 输出路径
 	//(1). 输出第一项 根目录
-	writeString("<A href=\"/\">/</A>");
+	puts("<A href=\"/\">/</A>");
 
 	//(2). 其它目录
 	std::string::size_type st = 1;
@@ -102,18 +203,18 @@ bool HTTPContent::open(const std::string &urlStr, const std::string &filePath)
 		std::string strDirName =  urlStr.substr(st, stNext - st + 1);
 		std::string strSubUrl = urlStr.substr(0, stNext + 1);
 
-		writeString("&nbsp;|&nbsp;");
+		puts("&nbsp;|&nbsp;");
 
-		writeString("<A href=\"");
-		writeString(AtoUTF8(strSubUrl).c_str());
-		writeString("\">");
-		writeString(AtoUTF8(strDirName).c_str());
-		writeString("</A>");
+		puts("<A href=\"");
+		puts(AtoUTF8(strSubUrl).c_str());
+		puts("\">");
+		puts(AtoUTF8(strDirName).c_str());
+		puts("</A>");
 		
 		// 下一个目录
 		st = stNext + 1;
 	}
-	writeString("<br /><hr />");
+	puts("<br /><hr />");
 
 	// 3. 列出当前目录下的所有文件
 	std::string strFullName;
@@ -148,26 +249,26 @@ bool HTTPContent::open(const std::string &urlStr, const std::string &filePath)
 
 				// 最后修改时间
 				_ctime64_s( buffer, _countof(buffer), &fileinfo.time_write );
-				writeString(AtoUTF8(buffer).c_str());
+				puts(AtoUTF8(buffer).c_str());
 
 				// 目录名需要转换为UTF8编码
 				sprintf(buffer, "%s/", fileinfo.name);
 				std::string fileurl = AtoUTF8(urlStr.c_str());
 				std::string filename = AtoUTF8(buffer);
 
-				writeString("&nbsp;&nbsp;");
-				writeString("<A href=\"");
-				writeString(fileurl.c_str());
-				writeString(filename.c_str());
-				writeString("\">");
-				writeString(filename.c_str());
-				writeString("</A>");
+				puts("&nbsp;&nbsp;");
+				puts("<A href=\"");
+				puts(fileurl.c_str());
+				puts(filename.c_str());
+				puts("\">");
+				puts(filename.c_str());
+				puts("</A>");
 
 				// 写入目录标志
-				writeString("&nbsp;&nbsp;[DIR]");
+				puts("&nbsp;&nbsp;[DIR]");
 
 				// 换行
-				writeString("<br />");
+				puts("<br />");
 			}
 			else
 			{
@@ -224,281 +325,89 @@ bool HTTPContent::open(const std::string &urlStr, const std::string &filePath)
 	// 把文件字符串写入到 Content 中.
 	if(strFiles.size() > 0)
 	{
-		writeString(strFiles.c_str());
+		puts(strFiles.c_str());
 	}
 
 	// 4. 输出结束标志.
-	writeString("</body></html>");
+	puts("</body></html>");
 
-	_openType = OPEN_DIR;
+	/*
+	* 生成响应头信息
+	*/
+	__int64 ltime;
+	_time64(&ltime);
+
+	map_content_type_string(_contentType, CONTENT_TYPE_HTML);
+	format_range(_contentRange, 0, bp->size() - 1, bp->size());
+	build_etag_string(_etag, bp->buffer(), (size_t)bp->size());
+	_contentLength = bp->size();
+	_lastModify = format_http_date(&ltime);
+	_acceptRanges = false;
 	return true;
 }
 
-bool HTTPContent::open(const char* buf, int len, int type)
+size_t HTTPContent::puts(const char* str)
 {
-	if(OPEN_NONE != _openType) return false;
-
-	assert(_memfile.fsize() == 0);
-	if( len == write(buf, len) )
-	{
-		_openType = type;
-	}
-	else
-	{
-		assert(0);
-	}
-
-	return OPEN_NONE != _openType;
+	assert(_content);
+	return _content->write(str, strlen(str));
 }
 
 void HTTPContent::close()
 {
-	//assert( OPEN_NONE != _openType );
-
-	_contentType = "";
-	_fileName = "";
-
-	
-	_file.close();
-	_memfile.trunc();
-
-	_openType = OPEN_NONE;
+	if(_content)
+	{
+		delete _content;
+		_content = NULL;
+	}
 }
 
-bool HTTPContent::isOpen()
+std::string& HTTPContent::contentType()
 {
-	return  OPEN_NONE != _openType;
+	return _contentType;
 }
 
-std::string HTTPContent::getContentTypeFromFileName(const char* pszFileName)
+std::string& HTTPContent::contentRange()
 {
-	std::string strType = "application/octet-stream";
-
-	const char *pExt = strrchr(pszFileName, '.');
-	if(pExt && strlen(pExt) < 19)
-	{
-		char szExt[20];
-		strcpy(szExt, pExt + 1);
-
-		if(stricmp(szExt, "jpg") == 0)
-		{
-			strType =  "image/jpeg";
-		}
-		else if(stricmp(szExt, "txt") == 0)
-		{
-			strType = "text/plain";
-		}
-		else if(stricmp(szExt, "htm") == 0)
-		{
-			strType = "text/html";
-		}
-		else if(stricmp(szExt, "html") == 0)
-		{
-			strType = "text/html";
-		}
-		else if(stricmp(szExt, "gif") == 0)
-		{
-			strType = "image/gif";
-		}
-		else if(stricmp(szExt, "png") == 0)
-		{
-			strType = "image/png";
-		}
-		else if(stricmp(szExt, "bmp") == 0)
-		{
-			strType = "image/x-xbitmap";
-		}
-		else
-		{
-		}
-	}
-
-	return strType;
+	return _contentRange;
 }
-
-size_t HTTPContent::writeString(const char* pszString)
-{
-	return write((void *)pszString, strlen(pszString));
-}
-
-size_t HTTPContent::write(const void* buf, size_t len)
-{
-	if(_file.isopen())
-	{
-		/* 目前没有用到可写的 HTTPContent */
-		assert(0);
-		return _file.write(buf, len);
-	}
-	else
-	{
-		return _memfile.write(buf, len);
-	}
-}
-
-std::string HTTPContent::contentType()
-{
-	std::string strType("application/octet-stream");
-
-	if(_openType == OPEN_FILE)
-	{
-		strType = getContentTypeFromFileName(_fileName.c_str());
-	}
-	else if(_openType == OPEN_TEXT)
-	{
-		strType = "text/plain";
-	}
-	else if(_openType == OPEN_HTML)
-	{
-		strType = "text/html";
-	}
-	else if(_openType == OPEN_DIR)
-	{
-		strType = "text/html";
-	}
-	else
-	{
-	}
-
-	return strType;
-}
-
 
 __int64 HTTPContent::contentLength()
 {
-	__int64 nLength = 0;
-
-	if(_openType == OPEN_FILE)
-	{
-		nLength = _to - _from + 1;
-	}
-	else
-	{
-		nLength = _memfile.fsize();
-	}
-
-	return nLength;
+	return _contentLength;
 }
 
-std::string HTTPContent::lastModified()
+std::string& HTTPContent::lastModified()
 {
-	__int64 ltime;
-
-	if(_openType == OPEN_FILE)
-	{
-		ltime = _fileInf.st_mtime;
-	}
-	else
-	{
-		_time64( &ltime );
-	}
-
-	return format_http_date(&ltime);
+	return _lastModify;
 }
 
-std::string HTTPContent::contentRange()
+std::string& HTTPContent::etag()
 {
-	char szRanges[300] = {0};
-	if(_openType == OPEN_FILE)
-	{
-		sprintf(szRanges, "bytes %lld-%lld/%lld", _from, _to, _fileInf.st_size);
-	}
-	else
-	{
-		
-	}
-	return szRanges;
+	return _etag;
 }
 
-bool HTTPContent::isFile()
+bool HTTPContent::acceptRanges()
 {
-	return _file.isopen();
+	return _acceptRanges;
 }
 
-bool HTTPContent::eof()
+
+__int64 HTTPContent::_size()
 {
-	if(_file.isopen())
-	{
-		//if(feof(_file))
-		if(_file.eof())
-		{
-			return true;
-		}
-		else
-		{
-			return _file.tell() >= _to;
-			//return _ftelli64(_file) >= _to;
-		}
-	}
-	else
-	{
-		return _memfile.eof();
-	}
+	if(_content) return _content->size();
+	return 0;
 }
 
-size_t HTTPContent::read(void* buf, size_t len)
+size_t HTTPContent::_pump(reader_t reader, size_t maxlen)
 {
-	assert(len);
-
-	if(_file.isopen())
-	{
-		int nRet = 0;
-		//__int64 lCurPos = _ftelli64(_file);  // ftell()返回的是当前指针的位置,指向第一个未读的字节
-		__int64 lCurPos = _file.tell();
-		__int64 lLeftSize = _to - lCurPos + 1; // 文件中剩余的字节数
-
-		if(len > lLeftSize)
-		{
-			len = static_cast<size_t>(lLeftSize);// 此处是安全的
-		}
-		//return fread(buf, 1, len, _file); 
-		return _file.read(buf, len);
-	}
-	else
-	{
-		return _memfile.read(buf, len);
-	}
+	return 0;
 }
 
-std::string HTTPContent::etag()
+size_t HTTPContent::_read(void* buf, size_t len)
 {
-	std::string strETag("");
-	if(OPEN_FILE == _openType)
+	if(_content)
 	{
-		char szLength[201] = {0};
-		//_ltoa_s((_to - _from + 1), szLength, 200, 10);
-		_i64toa(_fileInf.st_size, szLength, 10);
-
-		// 如果是文件, 根据文件大小和修改日期创建. [ETag: ec5ee54c00000000:754998030] 修改时间的HEX值:文件长度
-		// 确保同一个资源的 ETag 是同一个值.
-		// 即使客户端请求的只是这个资源的一部分.
-		// 断点续传客户端根据 ETag 的值确定下载的几个部分是不是同一个文件.
-		strETag = to_hex((const unsigned char*)(&_fileInf.st_mtime), sizeof(_fileInf.st_mtime));
-		strETag += ":";
-		strETag += szLength;
+		return _content->read(buf, len);
 	}
-	else
-	{
-		char szLength[201] = {0};
-		 _ltoa_s(_memfile.fsize(), szLength, 200, 10); // 内存数据没必要用 __int64
-
-		// 如果是内存数据, 根据大小和取若干个字节的16进制字符创建.
-		unsigned char szValue[ETAG_BYTE_SIZE + 1];
-
-		for(int i = 0; i < ETAG_BYTE_SIZE; ++i)
-		{
-			int nUnit = _memfile.fsize() / ETAG_BYTE_SIZE;
-			szValue[i] = reinterpret_cast<const char*>(_memfile.buffer())[nUnit * i];
-		}
-
-		strETag = to_hex(szValue, ETAG_BYTE_SIZE);
-		strETag += ":";
-		strETag += szLength;
-	}
-
-	return strETag;
+	return 0;
 }
-
-
-/*
-int HTTPContent::Seek(int nOffset);
-*/

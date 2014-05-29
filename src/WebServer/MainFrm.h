@@ -5,12 +5,13 @@
 #pragma once
 
 #include "ChildView.h"
-#include "HTTPConfig.h"
+#include "HTTPLib.h"
+#include "HTTPConfigXml.h"
 #include "HttpServer.h"
 #define WM_NOTIFY_ICON (WM_USER + 107)
 #define WM_CONNECTION_NUMBER (WM_USER + 109) // 有新的连接数目
 
-class CMainFrame : public CFrameWnd, public IHTTPServerStatusHandler
+class CMainFrame : public CFrameWnd
 {
 	
 public:

@@ -120,23 +120,33 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ATW.cpp" />
-    <ClCompile Include="FCGICache.cpp" />
     <ClCompile Include="ChildView.cpp" />
     <ClCompile Include="FCGIFactory.cpp" />
     <ClCompile Include="FCGIRecord.cpp" />
+    <ClCompile Include="FCGITransformer.cpp" />
     <ClCompile Include="FCGIResponder.cpp" />
-    <ClCompile Include="HTTPConfig.cpp" />
+    <ClCompile Include="Buffer.cpp" />
+    <ClCompile Include="HTTPConnection.cpp" />
+    <ClCompile Include="IOCPAdapter.cpp" />
+    <ClCompile Include="IOCPContext.cpp" />
+    <ClCompile Include="IOCPSelector.cpp" />
+    <ClCompile Include="HTTPConfigXml.cpp" />
     <ClCompile Include="HTTPContent.cpp" />
-    <ClCompile Include="HTTPDef.cpp" />
+    <ClCompile Include="HTTPLib.cpp" />
+    <ClCompile Include="HTTPListener.cpp" />
     <ClCompile Include="HTTPRequest.cpp" />
     <ClCompile Include="HTTPResponder.cpp" />
     <ClCompile Include="HTTPResponseHeader.cpp" />
     <ClCompile Include="HTTPServer.cpp" />
-    <ClCompile Include="IOCPNetwork.cpp" />
+    <ClCompile Include="IOStateMachine.cpp" />
+    <ClCompile Include="IPipeTransformer.cpp" />
     <ClCompile Include="Lock.cpp" />
     <ClCompile Include="Logger.cpp" />
     <ClCompile Include="MainFrm.cpp" />
-    <ClCompile Include="memfile.cpp" />
+    <ClCompile Include="Pipes\BufferPipe.cpp" />
+    <ClCompile Include="Pipes\FilePipe.cpp" />
+    <ClCompile Include="Pipes\Pipe.cpp" />
+    <ClCompile Include="HTTPResponderFactory.cpp" />
     <ClCompile Include="SettingDlg.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -144,36 +154,46 @@
     </ClCompile>
     <ClCompile Include="TimerQueue.cpp" />
     <ClCompile Include="WebServer.cpp" />
-    <ClCompile Include="WINFile.cpp" />
+    <ClCompile Include="OSFile.cpp" />
     <ClCompile Include="XmlDocument.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ATW.h" />
-    <ClInclude Include="FCGICache.h" />
     <ClInclude Include="ChildView.h" />
     <ClInclude Include="fastcgi.h" />
     <ClInclude Include="FCGIFactory.h" />
     <ClInclude Include="FCGIRecord.h" />
+    <ClInclude Include="FCGITransformer.h" />
     <ClInclude Include="FCGIResponder.h" />
-    <ClInclude Include="HTTPConfig.h" />
+    <ClInclude Include="Buffer.h" />
+    <ClInclude Include="HTTP.h" />
+    <ClInclude Include="HTTPConnection.h" />
+    <ClInclude Include="IOCP.h" />
+    <ClInclude Include="HTTPConfigXml.h" />
     <ClInclude Include="HTTPContent.h" />
-    <ClInclude Include="HTTPDef.h" />
+    <ClInclude Include="HTTPLib.h" />
+    <ClInclude Include="HTTPListener.h" />
     <ClInclude Include="HTTPRequest.h" />
     <ClInclude Include="HTTPResponder.h" />
     <ClInclude Include="HTTPResponseHeader.h" />
     <ClInclude Include="HTTPServer.h" />
-    <ClInclude Include="IOCPNetwork.h" />
+    <ClInclude Include="IOSelector.h" />
+    <ClInclude Include="IOStateMachine.h" />
+    <ClInclude Include="IPipeTransformer.h" />
     <ClInclude Include="Lock.h" />
     <ClInclude Include="Logger.h" />
     <ClInclude Include="MainFrm.h" />
-    <ClInclude Include="memfile.h" />
+    <ClInclude Include="Pipes\BufferPipe.h" />
+    <ClInclude Include="Pipes\FilePipe.h" />
+    <ClInclude Include="Pipes\Pipe.h" />
     <ClInclude Include="Resource.h" />
+    <ClInclude Include="HTTPResponderFactory.h" />
     <ClInclude Include="SettingDlg.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="TimerQueue.h" />
     <ClInclude Include="WebServer.h" />
-    <ClInclude Include="WINFile.h" />
+    <ClInclude Include="OSFile.h" />
     <ClInclude Include="XmlDocument.h" />
   </ItemGroup>
   <ItemGroup>
@@ -182,7 +202,6 @@
     <None Include="res\WebServer.ico" />
     <None Include="res\WebServer.rc2" />
     <None Include="ReadMe.txt" />
-    <None Include="tmp.txt" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="WebServer.rc" />

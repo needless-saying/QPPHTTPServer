@@ -1,9 +1,10 @@
 #include "StdAfx.h"
 #include "FCGIRecord.h"
 
-#define FCGI_HEADER_SIZE FCGI_HEADER_LEN
-
-void write_number(unsigned char* dest, unsigned int number, int bytes)
+/*
+* 按照FCGI协议编码数值
+*/
+static void write_number(unsigned char* dest, unsigned int number, int bytes)
 {
 	/*
 	* 高位在前
@@ -39,7 +40,7 @@ void write_number(unsigned char* dest, unsigned int number, int bytes)
 	}
 }
 
-unsigned int read_number14(const unsigned char* src, size_t *bytes)
+static unsigned int read_number14(const unsigned char* src, size_t *bytes)
 {
 	if( (*src >> 7) == 0 )
 	{
@@ -56,55 +57,186 @@ unsigned int read_number14(const unsigned char* src, size_t *bytes)
 	}
 }
 
-unsigned int read_number2(const unsigned char* src)
+static unsigned int read_number2(const unsigned char* src)
 {
 	/* 2字节 */
 	// ((B3 & 0x7f) << 24) + (B2 << 16) + (B1 << 8) + B0];
 	return (*src << 8) + (*(src + 1));
 }
 
-size_t FCGIRecord::toNumber2(const unsigned char* src)
-{
-	return read_number2(src);
-}
-
-size_t FCGIRecord::toNumber14(const unsigned char* src, size_t *bytes)
-{
-	return read_number14(src, bytes);
-}
-
-void FCGIRecord::toBytes(void* dest, size_t number, size_t bytes)
-{
-	write_number(reinterpret_cast<unsigned char*>(dest), number, bytes);
-}
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 
 FCGIRecord::FCGIRecord()
-	: _buffer(1024, 65535 + FCGI_HEADER_SIZE) /* 这是一个 Fast CGI record 的最大长度 */
+	: _buffer(1024, 65535 + FCGI_HEADER_LEN) /* 这是一个 Fast CGI record 的最大长度 */
 {
+}
+
+FCGIRecord::FCGIRecord(const void* buf, size_t len)
+	: _buffer(1024, 65535 + FCGI_HEADER_LEN)
+{
+	assign(buf, len);
+}
+
+FCGIRecord::FCGIRecord(const FCGIRecord& rh)
+	: _buffer(1024, 65535 + FCGI_HEADER_LEN)
+{
+	assign(rh.buffer(), rh.size());
 }
 
 FCGIRecord::~FCGIRecord()
 {
 }
 
-void FCGIRecord::reset()
+size_t FCGIRecord::assign(const void* buf, size_t len)
 {
-	_buffer.trunc();
+	if(len < FCGI_HEADER_LEN)
+	{
+		return 0;
+	}
+	else
+	{
+		const FCGI_Header* header = reinterpret_cast<const FCGI_Header*>(buf);
+		size_t recordLen = getContentLength() + FCGI_HEADER_LEN + header->paddingLength;
+		if(len < recordLen)
+		{
+			// 长度不足
+			return 0;
+		}
+		else
+		{
+			// 拷贝到内部缓冲区
+			_buffer.trunc();
+			_buffer.write(buf, recordLen);
+
+			return recordLen;
+		}
+	}
 }
 
-bool FCGIRecord::setHeader(unsigned short requestId, int type)
+size_t FCGIRecord::assign(IPipe* p)
+{
+	//if(p->size() < FCGI_HEADER_LEN)
+	//{
+	//	// 长度不足
+	//	return 0;
+	//}
+	//else
+	//{
+	//	FCGI_Header header;
+	//	p->peek(&header, FCGI_HEADER_LEN);
+
+	//	size_t recordLen = getContentLength(header) + header.paddingLength + FCGI_HEADER_LEN;
+	//	if(p->size() < recordLen)
+	//	{
+	//		// 长度不足
+	//		return 0;
+	//	}
+	//	else
+	//	{
+	//		void* buf = NULL;
+	//		size_t lockedLen = _buffer.lock(&buf, recordLen);
+	//		if(lockedLen < recordLen)
+	//		{
+	//			// 空间不足
+	//			_buffer.unlock(0);
+	//			assert(0);
+	//			return 0;
+	//		}
+	//		else
+	//		{
+	//			p->read(buf, recordLen);
+	//			_buffer.unlock(recordLen);
+	//			return recordLen;
+	//		}
+	//	}
+	//}
+	return 0;
+}
+
+size_t FCGIRecord::assign(const Buffer* buf)
+{
+	return assign(buf->buffer(), buf->size());
+}
+
+FCGIRecord& FCGIRecord::operator = (const FCGIRecord& rh)
+{
+	assign(rh.buffer(), rh.size());
+	return *this;
+}
+
+const void* FCGIRecord::buffer() const
+{
+	return _buffer.buffer();
+}
+
+size_t FCGIRecord::size() const
+{
+	return _buffer.size();
+}
+
+void FCGIRecord::reset()
+{
+	_buffer.trunc(false);
+}
+
+bool FCGIRecord::check()
 {
 	FCGI_Header header;
-	memset(&header, 0, FCGI_HEADER_SIZE);
+	if(getHeader(header))
+	{
+		return getContentLength() == (_buffer.size() - FCGI_HEADER_LEN - header.paddingLength);
+	}
+	return false;
+}
+
+bool FCGIRecord::setHeader(unsigned short requestId, unsigned char type)
+{
+	FCGI_Header header;
+	memset(&header, 0, FCGI_HEADER_LEN);
 
 	header.version = FCGI_VERSION_1;
-	header.type = static_cast<unsigned char>(type);
+	header.type = type;
 	write_number(&header.requestIdB1, requestId, 2);
 	
 
 	_buffer.trunc();
-	_buffer.write(&header, FCGI_HEADER_SIZE);
+	_buffer.write(&header, FCGI_HEADER_LEN);
 	return true;
+}
+
+bool FCGIRecord::getHeader(FCGI_Header &header)
+{
+	if( _buffer.size() >= FCGI_HEADER_LEN )
+	{
+		const FCGI_Header* headerPtr = reinterpret_cast<const FCGI_Header*>(_buffer.buffer());
+		memcpy(&header, headerPtr, FCGI_HEADER_LEN);
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+unsigned char FCGIRecord::getType()
+{
+	FCGI_Header header;
+	if(getHeader(header))
+	{
+		return header.type;
+	}
+	return 0;
+}
+
+size_t FCGIRecord::getContentLength()
+{
+	FCGI_Header header;
+	if(getHeader(header))
+	{
+		return read_number2(&header.contentLengthB1);
+	}
+	return 0;
 }
 
 bool FCGIRecord::setBeginRequestBody(unsigned short role, bool keepConn)
@@ -129,7 +261,7 @@ bool FCGIRecord::setEndRequestBody(unsigned int appStatus, unsigned char protoco
 	memset(&body, 0, sizeof(FCGI_EndRequestBody));
 
 	write_number(&body.appStatusB3, appStatus, 4);
-	body.protocolStatus= protocolStatus;
+	body.protocolStatus = protocolStatus;
 
 	_buffer.write(&body, sizeof(FCGI_EndRequestBody));
 	return true;
@@ -197,137 +329,68 @@ bool FCGIRecord::addNameValuePair(nv_t n, nv_t v)
 	return true;
 }
 
-bool FCGIRecord::addBodyData(unsigned char* buf, size_t len)
+size_t FCGIRecord::addBodyData(const void* buf, size_t len)
 {
-	return _buffer.write(buf, len) == len;
+	return _buffer.write(buf, len);
 }
 
-bool FCGIRecord::setEnd()
+bool FCGIRecord::setEnd(unsigned char padding /* = 0 */)
 {
-	if(_buffer.fsize() < FCGI_HEADER_SIZE) return false;
+	if(_buffer.size() < FCGI_HEADER_LEN) return false;
 
 	/* 把contentlength 写到 FCGI_Header 相应的字段中 */
-	size_t contentLength = _buffer.fsize() - FCGI_HEADER_SIZE;
-	FCGI_Header* header = const_cast<FCGI_Header*>(reinterpret_cast<const FCGI_Header*>(_buffer.buffer()));
+	size_t contentLength = _buffer.size() - FCGI_HEADER_LEN;
+	
+	FCGI_Header* header = NULL;
+	_buffer.seek(0, SEEK_SET);
+	_buffer.lock((void**)&header, FCGI_HEADER_LEN + contentLength);
+
 	write_number(&header->contentLengthB1, contentLength, 2);
+	header->paddingLength = padding;
+
+	_buffer.unlock(FCGI_HEADER_LEN + contentLength);
+	
+	/* 填充对齐 */
+	if(padding > 0)
+	{
+		char c = 0;
+		for(unsigned char i = 0; i < padding; ++i)
+		{
+			_buffer.write(&c, 1);
+		}
+	}
 	return true;
 }
 
-const void* FCGIRecord::buffer()
+size_t FCGIRecord::getBodyLength()
 {
-	return _buffer.buffer();
-}
-
-size_t FCGIRecord::size()
-{
-	return _buffer.fsize();
-}
-
-size_t FCGIRecord::read(void* buf, size_t len)
-{
-	if( _buffer.fsize() < FCGI_HEADER_SIZE )
+	if( _buffer.size() > FCGI_HEADER_LEN )
 	{
-		return _buffer.read(buf, len);
+		return _buffer.size() - FCGI_HEADER_LEN;
 	}
 	else
 	{
-		/*
-		* padding 数据忽略.
-		*/
-		const FCGI_Header* header = reinterpret_cast<const FCGI_Header*>(_buffer.buffer());
-		size_t bytesMax = getContentLength(*header) + FCGI_HEADER_SIZE - _buffer.tellg();
-		size_t readLen = len;
-		if( readLen > bytesMax)
-		{
-			readLen = bytesMax;
-		}
-
-		return _buffer.read(buf, readLen);
+		return 0;
 	}
 }
 
-size_t FCGIRecord::writeHeader(const void *buf, size_t len)
+const void* FCGIRecord::getBodyData()
 {
-	size_t bytesWritten = 0;
-	if(_buffer.fsize() < FCGI_HEADER_SIZE)
+	if( getBodyLength() > 0 )
 	{
-		size_t requiredHeaderSize = FCGI_HEADER_SIZE - _buffer.fsize();
-
-		/* 继续读取 FCGI_Header */
-		if( len > requiredHeaderSize )
-		{
-			/* 足够读取到 FCGI_Header */
-			bytesWritten = _buffer.write(buf, requiredHeaderSize);
-		}
-		else
-		{
-			/* 数据长度不足 FCGI_Header,等待下一次继续 */
-			bytesWritten = _buffer.write(buf, len);
-		}
-	}
-
-	return bytesWritten;
-}
-
-size_t FCGIRecord::write(const void* buf, size_t len)
-{
-	size_t bytesWritten = 0;
-
-	/* 先写入 FCGI_Header */
-	bytesWritten = writeHeader(buf, len);
-	if( bytesWritten >= len) return bytesWritten;
-	
-	/* 获取内容长度 */
-	assert( _buffer.fsize() >= FCGI_HEADER_SIZE );
-	const FCGI_Header* header = reinterpret_cast<const FCGI_Header*>(_buffer.buffer());
-	size_t contentLength = getContentLength(*header);
-	size_t paddingLength = header->paddingLength;
-	if(contentLength == 0)
-	{
+		return reinterpret_cast<const char*>(_buffer.buffer()) + FCGI_HEADER_LEN;
 	}
 	else
 	{
-		/* 写入内容 */
-		size_t bytesMax = contentLength + FCGI_HEADER_SIZE + paddingLength - _buffer.fsize();
-		if(len - bytesWritten > bytesMax)
-		{
-			bytesWritten += _buffer.write(reinterpret_cast<const byte*>(buf) + bytesWritten, bytesMax);
-		}
-		else
-		{
-			bytesWritten += _buffer.write(reinterpret_cast<const byte*>(buf) + bytesWritten, len - bytesWritten);
-		}
+		return NULL;
 	}
-
-
-	return bytesWritten;
-}
-
-bool FCGIRecord::getHeader(FCGI_Header &header)
-{
-	if( _buffer.fsize() >= FCGI_HEADER_SIZE )
-	{
-		const FCGI_Header* headerPtr = reinterpret_cast<const FCGI_Header*>(_buffer.buffer());
-		memcpy(&header, headerPtr, FCGI_HEADER_SIZE);
-		return true;
-	}
-	else
-	{
-		return false;
-	}
-}
-
-size_t FCGIRecord::getContentLength(const FCGI_Header &header)
-{
-	return read_number2(&header.contentLengthB1);
 }
 
 bool FCGIRecord::getBeginRequestBody(unsigned short &role, bool &keepConn)
 {
-	if( getType() != FCGI_BEGIN_REQUEST ) return false;
+	if( !check() || getType() != FCGI_BEGIN_REQUEST ) return false;
 
-	const void* bodyStart = reinterpret_cast<const char*>(_buffer.buffer());
-	const FCGI_BeginRequestRecord *recordPtr = reinterpret_cast<const FCGI_BeginRequestRecord*>(bodyStart);
+	const FCGI_BeginRequestRecord *recordPtr = reinterpret_cast<const FCGI_BeginRequestRecord*>(getBodyData());
 	role = read_number2(&recordPtr->body.roleB1);
 	keepConn = (recordPtr->body.flags & FCGI_KEEP_CONN) != 0;
 
@@ -336,52 +399,29 @@ bool FCGIRecord::getBeginRequestBody(unsigned short &role, bool &keepConn)
 
 bool FCGIRecord::getEndRequestBody(unsigned int &appStatus, unsigned char &protocolStatus)
 {
-	if( getType() != FCGI_END_REQUEST ) return false;
+	if( !check() || getType() != FCGI_END_REQUEST ) return false;
 
 	size_t bytes = 0;
-	const void* bodyStart = reinterpret_cast<const char*>(_buffer.buffer());
-	const FCGI_EndRequestRecord *recordPtr = reinterpret_cast<const FCGI_EndRequestRecord*>(bodyStart);
+	const FCGI_EndRequestRecord *recordPtr = reinterpret_cast<const FCGI_EndRequestRecord*>(getBodyData());
 	appStatus = read_number14(&recordPtr->body.appStatusB3, &bytes);
 	protocolStatus = recordPtr->body.protocolStatus;
 
 	return true;
 }
 
-bool FCGIRecord::check()
-{
-	FCGI_Header header;
-	if(getHeader(header))
-	{
-		return getContentLength(header) == (_buffer.fsize() - FCGI_HEADER_SIZE - header.paddingLength);
-	}
-	return false;
-}
-
-unsigned char FCGIRecord::getType()
-{
-	FCGI_Header header;
-	if(getHeader(header))
-	{
-		return header.type;
-	}
-	return 0;
-}
-
 size_t FCGIRecord::getNameValuePairCount()
 {
-	if( !check() ) return 0;
+	if( !check() || FCGI_PARAMS != getType() ) return 0;
 
 	size_t count = 0;
 	size_t nameBytes = 0;
 	size_t valueBytes = 0;
 	size_t nameLen = 0;
 	size_t valueLen = 0;
-	size_t pos = FCGI_HEADER_SIZE;
+	size_t pos = FCGI_HEADER_LEN;
 
-	const void* bodyStart = reinterpret_cast<const char*>(_buffer.buffer()) + FCGI_HEADER_SIZE;
-	const unsigned char* content = reinterpret_cast<const unsigned char*>(bodyStart);
-	
-	while( pos < _buffer.fsize())
+	const unsigned char* content = reinterpret_cast<const unsigned char*>(getBodyData());
+	while( pos < _buffer.size())
 	{
 		nameLen = read_number14(content, &nameBytes);
 		valueLen = read_number14(content + nameBytes, &valueBytes);
@@ -396,19 +436,17 @@ size_t FCGIRecord::getNameValuePairCount()
 
 bool FCGIRecord::getNameValuePair(int index, nv_t &n, nv_t &v)
 {
-	if( !check() ) return false;
+	if( !check() || FCGI_PARAMS != getType() ) return false;
 
 	size_t count = 0;
 	size_t nameBytes = 0;
 	size_t valueBytes = 0;
 	size_t nameLen = 0;
 	size_t valueLen = 0;
-	size_t pos = FCGI_HEADER_SIZE;
+	size_t pos = FCGI_HEADER_LEN;
 
-	const void* bodyStart = reinterpret_cast<const char*>(_buffer.buffer()) + FCGI_HEADER_SIZE;
-	const unsigned char* content = reinterpret_cast<const unsigned char*>(bodyStart);
-
-	while( pos < _buffer.fsize())
+	const unsigned char* content = reinterpret_cast<const unsigned char*>(getBodyData());
+	while( pos < _buffer.size())
 	{
 		nameLen = read_number14(content, &nameBytes);
 		valueLen = read_number14(content + nameBytes, &valueBytes);
@@ -452,302 +490,4 @@ bool FCGIRecord::getNameValuePair(int index, nv_t &n, nv_t &v)
 	}
 
 	return false;
-}
-
-size_t FCGIRecord::getBodyLength()
-{
-	if( _buffer.fsize() > FCGI_HEADER_SIZE )
-	{
-		return _buffer.fsize() - FCGI_HEADER_SIZE;
-	}
-	else
-	{
-		return 0;
-	}
-}
-
-const void* FCGIRecord::getBodyData()
-{
-	if( getBodyLength() > 0 )
-	{
-		return reinterpret_cast<const char*>(_buffer.buffer()) + FCGI_HEADER_SIZE;
-	}
-	else
-	{
-		return NULL;
-	}
-}
-
-/* 
-** ======================================================================= 
-* FCGIRecordWriter 实现
-*
-*/
-FCGIRecordWriter::FCGIRecordWriter(memfile &buf)
-	: _buf(buf), _headerPos(0)
-{
-}
-
-FCGIRecordWriter::~FCGIRecordWriter()
-{
-}
-
-size_t FCGIRecordWriter::write(const void *buf, size_t len)
-{
-	return _buf.write(buf, len);
-}
-
-size_t FCGIRecordWriter::writeHeader(unsigned short requestId, int type)
-{
-	FCGI_Header header;
-	memset(&header, 0, FCGI_HEADER_SIZE);
-
-	header.version = FCGI_VERSION_1;
-	header.type = static_cast<unsigned char>(type);
-	write_number(&header.requestIdB1, requestId, 2);
-
-	/* 记录 record header 的位置 */
-	size_t bytesWritten = write(&header, FCGI_HEADER_SIZE);
-	if(FCGI_HEADER_SIZE == bytesWritten)
-	{
-		_headerPos = _buf.tellp() - FCGI_HEADER_SIZE;
-	}
-	return bytesWritten;
-}
-
-size_t FCGIRecordWriter::writeBeginRequestBody(unsigned short role, bool keepConn)
-{
-	FCGI_BeginRequestBody body;
-	memset(&body, 0, sizeof(FCGI_BeginRequestBody));
-
-	write_number(&body.roleB1, role, 2);
-	if(keepConn) body.flags |= FCGI_KEEP_CONN;
-
-	return write(&body, sizeof(FCGI_BeginRequestBody));
-}
-
-size_t FCGIRecordWriter::writeEndRequestBody(unsigned int appStatus, unsigned char protocolStatus)
-{
-	FCGI_EndRequestBody body;
-	memset(&body, 0, sizeof(FCGI_EndRequestBody));
-
-	write_number(&body.appStatusB3, appStatus, 4);
-	body.protocolStatus= protocolStatus;
-
-	return write(&body, sizeof(FCGI_EndRequestBody));
-}
-
-size_t FCGIRecordWriter::writeUnknownTypeBody(unsigned char t)
-{
-	FCGI_UnknownTypeBody body;
-	memset(&body, 0, sizeof(FCGI_UnknownTypeBody));
-
-	body.type = t;
-
-	return write(&body, sizeof(FCGI_UnknownTypeBody));
-}
-
-size_t FCGIRecordWriter::writeNameValuePair(const char* nstr, const char* vstr)
-{
-	size_t nlen = strlen(nstr);
-	size_t vlen = strlen(vstr);
-	unsigned char numName[4], numVal[4];
-
-	if(nlen <= 127)
-	{
-		write_number(numName, nlen, 1);
-	}
-	else
-	{
-		write_number(numName, nlen, 4);
-	}
-	if(vlen <= 127)
-	{
-		write_number(numVal, vlen, 1);
-	}
-	else
-	{
-		write_number(numVal, vlen, 4);
-	}
-
-	size_t bytesWritten = write(numName, nlen <= 127 ? 1 : 4);
-	bytesWritten += write(numVal, vlen <= 127 ? 1 : 4);
-	bytesWritten += write(nstr, nlen);
-	bytesWritten += write(vstr, vlen);
-	return bytesWritten;
-}
-
-size_t FCGIRecordWriter::writeBodyData(const unsigned char* buf, size_t len)
-{
-	return write(buf, len);
-}
-
-size_t FCGIRecordWriter::writeEnd()
-{
-	/* 定位 FCGI_Header并写入长度 */
-	FCGI_Header *headerPtr = reinterpret_cast<FCGI_Header*>(reinterpret_cast<char*>(_buf.buffer()) + _headerPos);
-	size_t contentLength = _buf.tellp() - _headerPos - FCGI_HEADER_SIZE;
-	write_number(&headerPtr->contentLengthB1, contentLength, 2);
-
-	return contentLength;
-}
-
-/* 
-** ======================================================================= 
-* FCGIRecordReader 实现
-*
-*/
-FCGIRecordReader::FCGIRecordReader(const void *buf, size_t len)
-	: _buffer(buf), _len(len), _pos(0)
-{
-}
-
-FCGIRecordReader::~FCGIRecordReader()
-{
-}
-
-size_t FCGIRecordReader::putback(size_t len)
-{
-	_pos -= len;
-	return len;
-}
-
-size_t FCGIRecordReader::space()
-{
-	return _len - _pos;
-}
-
-size_t FCGIRecordReader::read(void* dest, size_t len)
-{
-	if( space() < len ) return 0;
-	if(dest) memcpy(dest, reinterpret_cast<const char*>(_buffer) + _pos, len);
-	_pos += len;
-	return len;
-}
-
-size_t FCGIRecordReader::readHeader(FCGI_Header &header)
-{
-	return read(&header, FCGI_HEADER_SIZE);
-}
-
-size_t FCGIRecordReader::readHeader(unsigned char &t, unsigned short &requestId, unsigned short &contentLength)
-{
-	FCGI_Header header;
-	size_t rbytes = readHeader(header);
-	if( rbytes == FCGI_HEADER_SIZE )
-	{
-		t = header.type;
-		requestId = read_number2(&header.requestIdB1);
-		contentLength = read_number2(&header.contentLengthB1);
-	}
-	return rbytes;
-}
-
-size_t FCGIRecordReader::readBeginRequestBody(unsigned short &role, bool &keepConn)
-{
-	FCGI_BeginRequestBody body;
-	size_t rbytes = read(&body, sizeof(FCGI_BeginRequestBody));
-	if( rbytes == sizeof(FCGI_BeginRequestBody))
-	{
-		role = read_number2(&body.roleB1);
-		keepConn = body.flags & FCGI_KEEP_CONN;
-	}
-
-	return rbytes;
-}
-
-size_t FCGIRecordReader::readEndRequestBody(unsigned int &appStatus, unsigned char &protocolStatus)
-{
-	FCGI_EndRequestBody body;
-	size_t rbytes = read(&body, sizeof(FCGI_EndRequestBody));
-
-	if( rbytes == sizeof(FCGI_EndRequestBody))
-	{
-		appStatus = read_number14(&body.appStatusB3, NULL);
-		protocolStatus = body.protocolStatus;
-	}
-
-	return rbytes;
-}
-
-size_t FCGIRecordReader::readBodyData(void* buf, size_t len)
-{
-	return read(buf, len);
-}
-
-size_t FCGIRecordReader::pos()
-{
-	return _pos;
-}
-
-size_t FCGIRecordReader::readNameValuePair(const char* &n, size_t &nameLen, const char* &val, size_t &valLen)
-{
-	size_t rbytes = 0;
-	unsigned char number[4] = {0};
-	size_t nlen = 0, vlen = 0;
-	bool sucess = false;
-
-	do
-	{
-		/* 读取name长度 */
-		/* 读取第一个字节判断是否是1位编码还是4位编码 */
-		if( read(number, 1) <= 0) break;
-		++rbytes;
-		if( number[0] & 0x80 )
-		{
-			/* 4位编码 */
-			if( read(&number[1], 3) <= 0 ) break;
-			rbytes += 3;
-			nlen = read_number14(number, NULL);
-		}
-		else
-		{
-			/* 1位编码 */
-			nlen = read_number14(number, NULL);
-		}
-
-		/* 读取value长度 */
-		if( read(number, 1) <= 0) break;
-		++rbytes;
-		if( number[0] & 0x80 )
-		{
-			/* 4位编码 */
-			if( read(&number[1], 3) <= 0 ) break;
-			rbytes += 3;
-			vlen = read_number14(number, NULL);
-		}
-		else
-		{
-			/* 1位编码 */
-			vlen = read_number14(number, NULL);
-		}
-
-		/* 读取name */
-		const char *tmpName = reinterpret_cast<const char*>(_buffer) + pos();
-		if( read(NULL, nlen) != nlen ) break;
-		rbytes += nlen;
-
-		/* 读取value */
-		const char *tmpVal = reinterpret_cast<const char*>(_buffer) + pos();
-		if( read(NULL, vlen) != vlen ) break;
-		rbytes += vlen;
-
-		/* 读取成功 */
-		sucess = true;
-		nameLen = nlen;
-		valLen = vlen;
-		n = tmpName;
-		val = tmpVal;
-
-	}while(0);
-
-	if(!sucess)
-	{
-		putback(rbytes);
-		return 0;
-	}
-	else
-	{
-		return rbytes;
-	}
 }

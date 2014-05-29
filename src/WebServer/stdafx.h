@@ -57,27 +57,28 @@
 #include <time.h>
 #include <assert.h>
 
-/* 
-* 禁止复制基类
-*/
-class INoCopy
-{
-private:
-	INoCopy(const INoCopy& rhs);
-	INoCopy& operator = (const INoCopy& rhs);
-
-public:
-	INoCopy() {};
-	~INoCopy() {};
-};
+typedef unsigned char byte;
 
 /*
-* 日志
+* 附加数据容器
 */
-#include "logger.h"
-LOGGER_USING(theLogger);
+class IUserDataContainer
+{
+private:
+	void* _userData;
+
+public:
+	IUserDataContainer() {};
+	virtual ~IUserDataContainer() {};
+
+	void* getUserData() { return _userData; }
+	void setUserData(void* ud) { _userData = ud; }
+};
+
+
 
 BOOL AutoLaunch(BOOL bRun /* = TRUE */);
 BOOL IsAutoLaunch();
+size_t GetSystemProcessorNumber();
 
 #define REMOVE_LINE_COUNT 100

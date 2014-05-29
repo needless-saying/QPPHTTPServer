@@ -12,22 +12,26 @@
 #include "HTTPResponder.h"
 #include "HTTPContent.h"
 
-HTTPResponder::HTTPResponder(IHTTPServer *server, IOCPNetwork *network)
-	: _content(NULL), _sockBuf(NULL), _sockBufLen(0), _request(NULL), _bytesRecv(0), _bytesSent(0),
-	_server(server), _network(network), _clientSock(IOCP_NULLKEY), _svrCode(SC_UNKNOWN), _connId(NULL)
+HTTPResponder::HTTPResponder(IHTTPServer *server, IRequest *req)
+	: _server(server), _request(req), _content(NULL), _svrCode(SC_OK), _bytesSent(0), _bytesRecved(0)
 {
 	
 }
 
+HTTPResponder::HTTPResponder(IHTTPServer *server, IRequest *req, int sc, const char* msg)
+	:_svrCode(sc), _server(server), _request(req)
+{
+	_content = new HTTPContent();
+	_content->open(msg, strlen(msg), CONTENT_TYPE_TEXT);
+}
+
 HTTPResponder::~HTTPResponder()
 {
+	if(_content) delete _content;
 }
 
 bool HTTPResponder::makeResponseHeader(int svrCode)
 {
-	/* 保存状态值 */
-	_svrCode = svrCode;
-
 	/* 写响应头 */
 	_header.setResponseCode(svrCode);
 	_header.addDefaultFields();
@@ -35,7 +39,7 @@ bool HTTPResponder::makeResponseHeader(int svrCode)
 	{
 		_header.add("Allow", "GET, HEAD, POST, PUT");
 	}
-	if(_content && _content->isOpen())
+	if(_content)
 	{
 		// Last-Modified
 		_header.add("Last-Modified", _content->lastModified());
@@ -58,7 +62,7 @@ bool HTTPResponder::makeResponseHeader(int svrCode)
 		}
 
 		// "Accept-Ranges: bytes" 支持断点续传(只有静态文件支持断点续传).
-		if(_content->isFile())
+		if(_content->acceptRanges())
 		{
 			_header.add("Accept-Ranges", "bytes");
 		}
@@ -83,37 +87,72 @@ bool HTTPResponder::makeResponseHeader(int svrCode)
 	return true;
 }
 
-int HTTPResponder::run(conn_id_t connId, iocp_key_t clientSock, IRequest *request)
+std::string HTTPResponder::getHeader()
 {
-	if(_sockBuf)
+	return _header.getHeader();
+}
+
+int HTTPResponder::getServerCode()
+{
+	return _header.getResponseCode();
+}
+
+IRequest* HTTPResponder::getRequest()
+{
+	return _request;
+}
+
+void HTTPResponder::statistics(__int64* bytesRecved, __int64* bytesSent)
+{
+	*bytesRecved = _bytesRecved;
+	*bytesSent = _bytesSent;
+}
+
+bool HTTPResponder::beforeStep(IOAdapter* adp, int ev, stm_result_t* res)
+{
+	if(TEST_BIT(ev, IO_EVENT_EPOLLERR))
 	{
-		return CT_INTERNAL_ERROR;
+		res->rc = STM_ABORT;
+		res->param.errorCode = SE_NETWORKFAILD;
+		return false;
 	}
-	
-	_connId = connId;
-	_clientSock = clientSock;
-	_request = request;
 
-	_sockBuf = new byte[MAX_SOCKBUFF_SIZE];
-	_sockBufLen = 0;
-	_content = new HTTPContent;
+	if(TEST_BIT(ev, IO_EVENT_EPOLLHUP))
+	{
+		res->rc = STM_ABORT;
+		res->param.errorCode = SE_REMOTEFAILD;
+		return false;
+	}
+	return true;
+}
 
-	int svrCode = SC_OK;
+bool HTTPResponder::step0(IOAdapter* adp, int ev, stm_result_t* res)
+{
+	/* 初始化 */
 	do
 	{
+		if(_content != NULL)
+		{
+			// 已经初始化过了
+			break;
+		}
+
+		// 根据 request 生成一个响应
+		_content = new HTTPContent();
+
 		/* 非法请求头或者请求头太大 */
 		if(!_request->isValid())
 		{
-			svrCode = SC_BADREQUEST;
-			_content->open(g_HTTP_Bad_Request, strlen(g_HTTP_Bad_Request), OPEN_HTML);
+			_svrCode = SC_BADREQUEST;
+			_content->open(g_HTTP_Bad_Request, strlen(g_HTTP_Bad_Request), CONTENT_TYPE_TEXT);
 			break;
 		}
 
 		/* 静态文件只支持 GET 和 HEAD 方法 */
 		if( METHOD_GET != _request->method() && METHOD_HEAD != _request->method())
 		{
-			svrCode = SC_BADMETHOD;
-			_content->open(g_HTTP_Bad_Method, strlen(g_HTTP_Bad_Method), OPEN_HTML);
+			_svrCode = SC_BADMETHOD;
+			_content->open(g_HTTP_Bad_Method, strlen(g_HTTP_Bad_Method), CONTENT_TYPE_TEXT);
 			break;
 		}
 
@@ -125,19 +164,19 @@ int HTTPResponder::run(conn_id_t connId, iocp_key_t clientSock, IRequest *reques
 		if(!_server->mapServerFilePath(uri, serverFilePath))
 		{
 			// 无法映射服务器文件名,提示禁止
-			svrCode = SC_FORBIDDEN;
-			_content->open(g_HTTP_Forbidden, strlen(g_HTTP_Forbidden), OPEN_TEXT);
+			_svrCode = SC_FORBIDDEN;
+			_content->open(g_HTTP_Forbidden, strlen(g_HTTP_Forbidden), CONTENT_TYPE_TEXT);
 		}
 		else if(serverFilePath.back() == '\\')
 		{
 			if(_content->open(uri, serverFilePath))
 			{
-				svrCode = SC_OK;
+				_svrCode = SC_OK;
 			}
 			else
 			{
-				svrCode = SC_SERVERERROR;
-				_content->open(g_HTTP_Server_Error, strlen(g_HTTP_Server_Error), OPEN_HTML);
+				_svrCode = SC_SERVERERROR;
+				_content->open(g_HTTP_Server_Error, strlen(g_HTTP_Server_Error), CONTENT_TYPE_TEXT);
 			}
 		}
 		else
@@ -148,157 +187,69 @@ int HTTPResponder::run(conn_id_t connId, iocp_key_t clientSock, IRequest *reques
 			__int64 lTo = -1;
 			if(_request->range(lFrom, lTo))
 			{
-				svrCode = SC_PARTIAL;
+				_svrCode = SC_PARTIAL;
 			}
 
 			if(!_content->open(serverFilePath, lFrom, lTo))
 			{
-				svrCode = SC_NOTFOUND;
-				_content->open(g_HTTP_Content_NotFound, strlen(g_HTTP_Content_NotFound), OPEN_TEXT);
+				_svrCode = SC_NOTFOUND;
+				_content->open(g_HTTP_Content_NotFound, strlen(g_HTTP_Content_NotFound), CONTENT_TYPE_TEXT);
 			}
 		}
 	}
 	while(false);
 	
 	/*
-	* 生成响应头并发送第一个数据包
+	* 创建管道链
 	*/
-	assert(_content->isOpen());
-	makeResponseHeader(svrCode);
+	makeResponseHeader(_svrCode);
 	if(_request->method() == METHOD_HEAD)
 	{
 		_content->close();
 		delete _content;
 		_content = NULL;
+
+		build_pipes_chain((IPipe*)&_header, (IPipe*)adp);
+	}
+	else
+	{
+		// 必须添加 (IPipe*) 否则会导致可变参数获取失败.
+		build_pipes_chain((IPipe*)_content, (IPipe*)&_header, (IPipe*)adp);
 	}
 
 	/* 
 	* 发送第一个数据包 
 	*/
-	
-	/* 读取响应头 */
-	if(_sockBufLen < MAX_SOCKBUFF_SIZE) _sockBufLen += _header.read(_sockBuf + _sockBufLen, MAX_SOCKBUFF_SIZE - _sockBufLen);
+	res->rc = STM_CONTINUE;
+	res->param.epollEvent = IO_EVENT_EPOLLOUT;
 
-	/* 读取内容 */
-	if(_content && _content->isOpen() && _sockBufLen < MAX_SOCKBUFF_SIZE)
-	{
-		_sockBufLen += _content->read(_sockBuf + _sockBufLen, MAX_SOCKBUFF_SIZE - _sockBufLen);
-	}
-
-	int netIoRet = _network->send(_clientSock, _sockBuf, _sockBufLen, _server->sendTimeout(), IOCPCallback, this);
-	if(IOCP_PENDING != netIoRet)
-	{
-		reset();
-		return IOCP_SESSIONTIMEO == netIoRet ? CT_SESSION_TIMEO : CT_CLIENTCLOSED;
-	}
-	else
-	{
-		return CT_SUCESS;
-	}
-}
-
-bool HTTPResponder::stop(int ec)
-{
+	forward();
 	return false;
 }
 
-bool HTTPResponder::reset()
+bool HTTPResponder::step1(IOAdapter* adp, int ev, stm_result_t* res)
 {
-	if(_content)
+	/* 发送响应流 */
+	size_t wr = adp->pump(0);
+	_bytesSent += wr;
+	if( 0 == wr )
 	{
-		if(_content->isOpen()) _content->close();
-		delete _content;
-		_content = NULL;
-	}
-	if(_sockBuf)
-	{
-		delete []_sockBuf;
-		_sockBuf = NULL;
-	}
-	_connId = INVALID_CONNID;
-	_request = NULL;
-	_header.reset();
-	_sockBufLen = 0;
-	_clientSock = IOCP_NULLKEY;
-	_bytesSent = 0;
-	_bytesRecv = 0;
-	_svrCode = SC_UNKNOWN;
-	return true;
-}
-
-void HTTPResponder::onSend(size_t bytesTransfered, int flags)
-{
-	if(0 == bytesTransfered)
-	{
-		close((flags & IOCP_WRITETIMEO) ? CT_SEND_TIMEO : CT_CLIENTCLOSED);
+		/* 发送完毕 */
+		forward();
+		return true;
 	}
 	else
 	{
-		_bytesSent += bytesTransfered;
-
-		/* 状态回调 */
-		_server->onResponderDataSent(this, bytesTransfered);
-
-		/* 
-		* 继续发送 
-		*/
-		_sockBufLen -= bytesTransfered;
-
-		/* 缓冲区内是否还有数据,有则移到缓冲区开头 */
-		if(_sockBufLen > 0)
-		{
-			memmove(_sockBuf, _sockBuf + bytesTransfered, _sockBufLen);
-		}
-
-		/* 继续读取响应头 */
-		if(_sockBufLen < MAX_SOCKBUFF_SIZE) _sockBufLen += _header.read(_sockBuf + _sockBufLen, MAX_SOCKBUFF_SIZE - _sockBufLen);
-
-		/* 读取内容 */
-		if(_content && _content->isOpen() && _sockBufLen < MAX_SOCKBUFF_SIZE)
-		{
-			_sockBufLen += _content->read(_sockBuf + _sockBufLen, MAX_SOCKBUFF_SIZE - _sockBufLen);
-		}
-
-		if( 0 == _sockBufLen )
-		{
-			/* 数据发送完毕 */
-			close(CT_SENDCOMPLETE);
-		}
-		else
-		{
-			/* 继续发送 */
-			int netIoRet = _network->send(_clientSock, _sockBuf, _sockBufLen, _server->sendTimeout(), IOCPCallback, this);
-			if(IOCP_PENDING == netIoRet)
-			{
-				/* 发送成功 */
-			}
-			else
-			{
-				close( IOCP_SESSIONTIMEO == netIoRet ? CT_SESSION_TIMEO : CT_CLIENTCLOSED);
-			}
-		}
+		/* 继续发送 */
+		res->rc = STM_CONTINUE;
+		res->param.epollEvent = IO_EVENT_EPOLLOUT;
 	}
+	return false;
 }
 
-void HTTPResponder::close(int ct)
+bool HTTPResponder::step2(IOAdapter* adp, int ev, stm_result_t* res)
 {
-	_server->onResponder(this, ct);
-}
-
-void HTTPResponder::IOCPCallback(iocp_key_t s, int flags, bool result, int transfered, byte* buf, size_t len, void* param)
-{
-	HTTPResponder *instPtr = reinterpret_cast<HTTPResponder*>(param);
-	if(flags & IOCP_SEND)
-	{
-		instPtr->onSend(transfered, flags);
-	}
-	else
-	{
-		assert(0);
-	}
-}
-
-std::string HTTPResponder::getHeader()
-{
-	return _header.getHeader();
+	/* 结束 */
+	res->rc = STM_DONE;
+	return false;
 }

@@ -47,10 +47,14 @@ BOOL CWebServerApp::InitInstance()
 
 	CWinApp::InitInstance();
 
-	if(!IOCPNetwork::initWinsockLib(2, 2))
+	// 初始化WinSock 2.2 低版本也可以.
+	WSADATA ws;
+	WORD wVer = MAKEWORD(2, 2);
+	if(0 != WSAStartup(wVer, &ws))
 	{
 		AfxMessageBox(IDP_SOCKETS_INIT_FAILED);
 	}
+	TRACE(_T("Winsock version %d.%d initialized.\r\n"), LOBYTE(ws.wVersion), HIBYTE(ws.wVersion));
 
 	// 若要创建主窗口，此代码将创建新的框架窗口
 	// 对象，然后将其设置为应用程序的主窗口对象
@@ -80,7 +84,7 @@ BOOL CWebServerApp::InitInstance()
 int CWebServerApp::ExitInstance()
 {
 	// TODO: 在此添加专用代码和/或调用基类
-	IOCPNetwork::cleanWinsockLib();
+	WSACleanup();
 	return CWinApp::ExitInstance();
 }
 
@@ -128,90 +132,3 @@ void CWebServerApp::OnAppAbout()
 
 
 // CWebServerApp 消息处理程序
-
-
-#define MY_REGKEY _T("httpserver")
-BOOL AutoLaunch(BOOL bRun /* = TRUE */)
-{	
-	// 获取路径
-	TCHAR szFileName[MAX_PATH + 10] = {0};
-	szFileName[0] = _T('\"');
-	if (0 == GetModuleFileName(NULL, szFileName + 1, MAX_PATH) ) return FALSE;
-	_tcscat(szFileName, _T("\" hide")); // 最小化运行
-
-	BOOL bRet = FALSE;
-	HKEY hKey;
-	LPCTSTR szKeyPath = _T("Software\\Microsoft\\Windows\\CurrentVersion");		
-	long ret = RegOpenKeyEx(HKEY_CURRENT_USER, szKeyPath, 0, KEY_WRITE, &hKey);
-	if(ret != ERROR_SUCCESS)
-	{
-		TRACE("无法读取注册表.");
-	}
-	else
-	{
-		HKEY hRunKey;
-		ret = RegCreateKeyEx(hKey, _T("Run"), 0, NULL, 0, KEY_WRITE, NULL, &hRunKey, NULL);
-		if(ERROR_SUCCESS == ret)
-		{
-			if(bRun)
-			{
-				bRet = (ERROR_SUCCESS == ::RegSetValueEx(hRunKey, MY_REGKEY, 0, REG_SZ, (BYTE*)szFileName, (_tcslen(szFileName) + 1) * sizeof(TCHAR)));
-			}
-			else
-			{
-				ret = RegDeleteValue(hRunKey, MY_REGKEY);
-				bRet = (ret == ERROR_SUCCESS);
-			}
-
-			RegCloseKey(hRunKey);
-		}
-		else
-		{
-			TRACE("无法写注册表.");
-		}
-		RegCloseKey(hKey);
-	}
-	return bRet;
-}
-
-
-BOOL IsAutoLaunch()
-{
-	BOOL bRet = FALSE;
-	HKEY hKey;
-	TCHAR szKeyPath[] = _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run");		
-	long ret = RegOpenKeyEx(HKEY_CURRENT_USER, szKeyPath, 0, KEY_READ, &hKey);
-	if(ret != ERROR_SUCCESS)
-	{
-		TRACE("无法读取注册表.");
-	}
-	else
-	{
-		TCHAR szValue[MAX_PATH + 1] = {0};
-		DWORD dwType = REG_SZ;
-		DWORD dwLen = MAX_PATH * sizeof(TCHAR);
-
-		LONG lRet = ::RegQueryValueEx(hKey, MY_REGKEY, NULL, &dwType, (LPBYTE)szValue, &dwLen);
-		if(ERROR_SUCCESS != lRet)
-		{
-		}
-		else
-		{
-			TCHAR szFileName[MAX_PATH + 10] = {0};
-			if (0 == GetModuleFileName(NULL, szFileName + 1, MAX_PATH) )
-			{
-				TRACE("无法查询获取当前进程的文件名.");
-			}
-			else
-			{
-				szFileName[0] = _T('\"');
-				_tcscat(szFileName, _T("\" hide"));
-				return _tcsicmp(szFileName, szValue) == 0;
-			}
-
-		}
-		RegCloseKey(hKey);
-	}
-
-	return bRet;
-}

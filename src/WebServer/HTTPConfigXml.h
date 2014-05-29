@@ -7,23 +7,23 @@
 */
 
 #pragma once
-#include "HTTPDef.h"
+#include "HTTPLib.h"
 #include "XmlDocument.h"
 
 /*
-* 实现 IHTTPConfig 作为 HTTPServer 的配置接口
+* 实现 IHTTPConfig 作为 HTTPServerImp 的配置接口
 * 用 XML 文件实现.
 */
 
-class HTTPConfig : public INoCopy, public IHTTPConfig
+class HTTPConfigXml : public IHTTPConfig
 {
 private:
 	XMLDocument _xmlDoc;
 	XMLHANDLE _curFcgiServerXmlHandle;
 
 public:
-	HTTPConfig();
-	~HTTPConfig();
+	HTTPConfigXml();
+	~HTTPConfigXml();
 
 	bool load(const std::string &fileName);
 	bool save(const std::string &fileName);
@@ -42,9 +42,9 @@ public:
 	bool setRecvTimeout(size_t n);
 	bool setSendTimeout(size_t n);
 	bool setKeepAliveTimeout(size_t n);
-	bool addFcgiServer(const fcgi_server_t *serverInf);
+	bool addFcgiServer(const fcgi_server_ctx_t *serverInf);
 	bool removeFcgiServer(const std::string &name);
-	bool updateFcgiServer(const std::string &name, const fcgi_server_t *serverInf);
+	bool updateFcgiServer(const std::string &name, const fcgi_server_ctx_t *serverInf);
 
 	bool setAutoRun(bool yes);
 	bool autoRun();
@@ -77,7 +77,7 @@ public:
 	size_t sendTimeout();
 	size_t keepAliveTimeout();
 
-	bool getFirstFcgiServer(fcgi_server_t *serverInf);
-	bool getNextFcgiServer(fcgi_server_t *serverInf);
+	bool getFirstFcgiServer(fcgi_server_ctx_t *serverInf);
+	bool getNextFcgiServer(fcgi_server_ctx_t *serverInf);
 };
 

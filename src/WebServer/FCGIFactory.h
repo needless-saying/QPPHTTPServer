@@ -7,9 +7,8 @@
 */
 
 #pragma once
-#include "IOCPNetwork.h"
+#include "HTTPLib.h"
 #include "FCGIRecord.h"
-#include "HTTPDef.h"
 
 /*
 * 关于Fast CGI 的运行模式
@@ -30,120 +29,60 @@
 */
 
 /*
-* FCGI 连接
+* 本地FCGI进程定义
 */
-typedef struct
+
+class FCGIResponder;
+class FCGIFactory : public IResponderFactory, public IOStateMachine
 {
-	unsigned short requestId;
-	iocp_key_t comm; /* 通讯句柄 */
-	bool cacheAll;
-	__int64 idleTime; /* 最后活跃时间,内部使用 */
-	void *instPtr; /* FCGIFactory实例指针,回调函数时用,内部使用 */
-}fcgi_conn_t;
-
-/*
-* 当有空闲连接时的回调函数
-* conn == NULL 时,表示获取失败.
-*/
-typedef void (*fcgi_conn_ready_func_t)(fcgi_conn_t *conn, void *param);
-
-/*
-* 函数返回值定义
-*/
-const int FCGIF_SUCESS = 0;
-const int FCGIF_ERROR = 1;
-
-class FCGIFactory : public INoCopy
-{
-private:
-
-	/*
-	* 本地FCGI进程定义
-	*/
+public:
 	typedef struct
 	{
-		PROCESS_INFORMATION *processInfo; /* 进程句柄 */
+		PROCESS_INFORMATION processInfo; /* 进程句柄 */
 		char pipeName[MAX_PATH]; /* 该进程对应的管道名 */
-		fcgi_conn_t *conn; /* 该进程对应的连接(一个进程只能有一个连接) */
-		uintptr_t thread; /* 创建进程并连接管道的线程 */
-		FCGIFactory *instPtr;
+		uintptr_t thread; /* 创建进程并连接管道的孵化线程 */
+		IOAdapter* adp;
+		FCGIFactory* instPtr;
 	}fcgi_process_context_t;
 	typedef std::list<fcgi_process_context_t*> fcgi_process_list_t;
-
-	/*
-	* FCGI 服务进程定义
-	*/
-	typedef struct 
-	{
-		char type;	/* 0: 本地; 1: 远程 */
-		char name[MAX_PATH]; /* ip地址/或者exec path */
-		u_int port; /* 端口 */
-		fcgi_process_list_t *processList; /* 进程列表 */
-	}fcgi_server_context_t;
-
-	/*
-	* 等待队列
-	*/
-	typedef std::pair<fcgi_conn_ready_func_t, void *> fcgi_get_conn_context_t;
-	typedef std::list<fcgi_get_conn_context_t> fcgi_get_conn_list_t;
-	typedef std::list<fcgi_conn_t*> fcgi_conn_list_t;
-	
-
-	/*
-	* 内部数据成员
-	*/
-	bool _inited;
-	fcgi_server_context_t *_fcgiServer; /* FCGI进程信息 */
-	fcgi_conn_list_t _workingFcgiConnList; /* 正在工作的FCGI连接 */
-	fcgi_conn_list_t _idleFcgiConnList; /* 空闲的FCGI连接 */
-	fcgi_get_conn_list_t _waitingList; /* 等待空闲连接队列 */
-	unsigned short _fcgiRequestIdSeed; /* FCGI Request ID */
-	size_t _maxConn; /* 最大连接数 */
-	size_t _maxWait; /* 等待空闲连队列最大项数 >> _maxConn */
-	std::string _fileExts; /* 扩展名 */
-	bool _cacheAll;
-	IOCPNetwork *_network;
-	IHTTPServer *_httpServer;
+private:
+	fcgi_server_ctx_t _fcgiServerCtx;
+	u_short _fcgiId;
+	IHTTPServer* _svr;
+	IOStateMachineScheduler* _scheduler;
 	Lock _lock;
-	HighResolutionTimer _hrt;
 
-	fcgi_process_context_t* allocProcessContext();
-	bool freeProcessContext(fcgi_process_context_t *context);
-	fcgi_conn_t* allocConnectionContext();
-	bool freeConnectionContext(fcgi_conn_t *conn);
-	fcgi_process_context_t* getProcessContext(fcgi_conn_t *conn);
+	fcgi_process_list_t _processList;		// 本地FCGI进程列表
+	std::list<IOAdapter*> _busyAdpList;		// 忙碌连接列表
+	std::list<IOAdapter*> _idleAdpList;		// 空闲列表
+	std::list<FCGIResponder*> _waitingList;
 
-	bool initConnection(fcgi_conn_t *conn);
-	void maintain();
+	void lock();
+	void unlock();
 
-	/*
-	* 连接回调
-	*/
-	static void IOCPCallback(iocp_key_t s, int flags, bool result, int transfered, byte* buf, size_t len, void* param);
-	static unsigned __stdcall spawnChild(void *param);
-	void onConnect(fcgi_conn_t *conn, bool sucess);
+	u_short getFCGIId();
+
+	// 分派FCGI连接
+	void dispatch();
+
+	// IOStateMachine
+	bool step0(IOAdapter* adp, int ev, stm_result_t* res);
+
+	// stm handler
+	void handleResponder(FCGIResponder* responder, IOAdapter* adp, IOStateMachine* sm, stm_result_t* res);
 
 public:
-	FCGIFactory(IHTTPServer *httpServer, IOCPNetwork *network);
+	FCGIFactory(IHTTPServer *svr, IOStateMachineScheduler* scheduler);
 	~FCGIFactory();
 
-	int init(const std::string &name, unsigned int port, const std::string &fileExts, size_t maxConn, size_t maxWait, bool cacheAll);
-	int destroy();
+	// 创建本地FCGI进程的线程函数
+	int spawn(fcgi_process_context_t *context);
 
-	/*
-	* 是否处理此url对应的请求
-	*/
-	bool catchRequest(const std::string &fileName);
+	void init(fcgi_server_ctx_t* ctx);
+	void release();
 
-	/*
-	* 获取FCGI连接,如果返回值为NULL,则表示无法立即获得一个空闲连接,已经进入等待队列.
-	* 一旦有连接进入空闲状态,将会通过 callbackFunc 函数回调.
-	*/
-	bool getConnection(fcgi_conn_t *&conn, fcgi_conn_ready_func_t callbackFunc, void *param);
-
-	/*
-	* 释放FCGI连接,并指明连接是否依然可用.
-	*/
-	void releaseConnection(fcgi_conn_t* conn, bool good);
+	// IResponderFactory
+	IResponder* catchRequest(IRequest* request);
+	void releaseResponder(IResponder* responder);
 };
 

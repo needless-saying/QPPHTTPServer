@@ -8,7 +8,8 @@
 
 #include "stdafx.h"
 #include <time.h>
-#include "HTTPDef.h"
+#include <functional>
+#include "HTTPLib.h"
 
 static char month[][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 static char week[][4] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -21,6 +22,8 @@ const char* g_HTTP_Bad_Method = "405 Method Not Allowed - Q++ HTTP Server";
 const char* g_HTTP_Server_Error = "500 Oops, server error - Q++ HTTP Server";
 const char* g_HTTP_Forbidden = "403 Forbidden - Q++ HTTP Server";
 const char* g_HTTP_Server_Busy = "503 Service Unavailable, try again later - Q++ HTTP Server";
+
+LOGGER_DECLARE(theLogger);
 
 std::string format_http_date(__int64* ltime)
 {
@@ -118,16 +121,39 @@ bool map_method(HTTP_METHOD md, char *str)
 	case METHOD_TRACE: strcpy(str, "TRACE"); break;
 	case METHOD_CONNECT: strcpy(str, "CONNECT"); break;
 	case METHOD_DELETE: strcpy(str, "DELETE"); break;
-	default: return false;
+	default: 
+		{
+			strcpy(str, "UNKNOWN");
+			return false;
+		}
 	}
 	return true;
 }
 
-
-bool is_end(const byte *data, size_t len)
+/* 判断一个请求头是否已经结束(两个连续换行),返回请求头长度(含2个换行符) */
+int http_request_end(const char *data, size_t len)
 {
-	if( len < 4 ) return false;
-	else return strncmp(reinterpret_cast<const char*>(data) + len - 4, "\r\n\r\n", 4) == 0;
+	if(len < 4) return -1;
+	for(size_t i = 3; i < len; ++i)
+	{
+		if(data[i - 3] == '\r' && data[i - 2] == '\n' && data[i - 1] == '\r' && data[i] == '\n')
+		{
+			return i + 1;
+		}
+	}
+
+	return -1;
+
+	// 直接用 strstr 可能会有问题,因为 data 不一定以0结尾.
+	//const char* pos = strstr((const char*)data, "\r\n\r\n");
+	//if(pos)
+	//{
+	//	return pos - data + 4;
+	//}
+	//else
+	//{
+	//	return -1;
+	//}
 }
 
 std::string get_field(const char* buf, const char* key)
@@ -329,10 +355,38 @@ bool get_ip_address(std::string& str)
 	return true;
 }
 
+std::string format_time(size_t ms)
+{
+	char buf[100] = {0};
+	size_t h = (ms / 1000) / HOUR;
+	size_t m = (ms - (h * HOUR * 1000)) / 1000 / MINUTE;
+	double s = (ms - (h * HOUR * 1000) - (m * MINUTE * 1000)) * 1.0 / 1000;
+
+	char *p = buf;
+	if(h > 0)
+	{
+		p += sprintf(p, "%dh,", h);
+	}
+	if(m > 0)
+	{
+		p += sprintf(p, "%dm,", m);
+	}
+	if(s > 0)
+	{
+		sprintf(p, "%.3fs", s);
+	}
+	else
+	{
+		sprintf(p, "0s");
+	}
+	return std::string(buf);
+}
+
 std::string format_size(__int64 bytes)
 {
 	// 计算以发送数据的长度
 	char buf[100] = {0};
+
 	if(bytes >= G_BYTES)
 	{
 		sprintf(buf, "%.2fGB",  bytes * 1.0 / G_BYTES);
@@ -349,6 +403,7 @@ std::string format_size(__int64 bytes)
 	{
 		sprintf(buf, "%lldBytes", bytes);
 	}
+
 	return std::string(buf);
 }
 
@@ -360,7 +415,7 @@ std::string format_speed(__int64 bytes, unsigned int timeUsed)
 
 	if(timeUsed <= 0)
 	{
-		strcpy(buf, "---");
+		strcpy(buf, "-");
 	}
 	else
 	{
@@ -385,4 +440,3 @@ std::string format_speed(__int64 bytes, unsigned int timeUsed)
 
 	return std::string(buf);
 }
-

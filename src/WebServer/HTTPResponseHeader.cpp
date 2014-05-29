@@ -3,7 +3,7 @@
 
 
 HTTPResponseHeader::HTTPResponseHeader()
-	: _resCode(SC_UNKNOWN)
+	: BufferPipe(MAX_RESPONSEHEADERSIZE, K_BYTES), _resCode(SC_UNKNOWN)
 {
 }
 
@@ -42,6 +42,11 @@ std::string HTTPResponseHeader::getFirstLine()
 			str += "302 Moved Temporarily";
 			break;
 		}
+	case SC_FORBIDDEN:
+		{
+			str += "403 Forbidden";
+			break;
+		}
 	case SC_NOTFOUND:
 		{
 			str += "404 Not Found";
@@ -65,6 +70,11 @@ int HTTPResponseHeader::setResponseCode(int resCode)
 	int oldCode = _resCode;
 	_resCode = resCode;
 	return oldCode;
+}
+
+int HTTPResponseHeader::getResponseCode()
+{
+	return _resCode;
 }
 
 HTTPResponseHeader::fields_t::iterator HTTPResponseHeader::find(const std::string &name)
@@ -147,28 +157,28 @@ bool HTTPResponseHeader::getField(const std::string &name, std::string &val)
 bool HTTPResponseHeader::format()
 {
 	// 清空缓存
-	_buf.trunc();
+	BufferPipe::trunc();
 
 	// 输出第一行
-	write(getFirstLine());
+	puts(getFirstLine());
 
 	// 把关联数组内的所有 key - value 写入缓冲区
 	for(fields_t::iterator iter = _headers.begin(); iter != _headers.end(); ++iter)
 	{
-		write(iter->first);
-		write(": ");
-		write(iter->second);
-		write("\r\n");
+		puts(iter->first);
+		puts(": ");
+		puts(iter->second);
+		puts("\r\n");
 	}
 
 	// 写入一个空行表示结束
-	write("\r\n");
+	puts("\r\n");
 	return true;
 }
 
-size_t HTTPResponseHeader::write(const std::string &str)
+size_t HTTPResponseHeader::puts(const std::string &str)
 {
-	return _buf.write(str.c_str(), str.size());
+	return write(str.c_str(), str.size());
 }
 
 size_t HTTPResponseHeader::addDefaultFields()
@@ -182,47 +192,21 @@ size_t HTTPResponseHeader::addDefaultFields()
 	return 2;
 }
 
-//bool HTTPResponseHeader::writeDefaultFields(HTTP_METHOD md, int svrCode)
+//size_t HTTPResponseHeader::write(const void* buf, size_t len)
 //{
-//	// 第一行
-//	writeHeader(getFirstLine(svrCode).c_str());
-//
-//	// Date
-//	writeHeader("Date: ");
-//	writeHeader(format_http_date(NULL).c_str());
-//	writeHeader("\r\n");
-//
-//	if(svrCode == SC_BADMETHOD)
-//	{
-//		writeHeader("Allow: GET, HEAD, POST, PUT\r\n");
-//	}
-//
-//	// HTTP Server
-//	writeHeader("Server: ");
-//	writeHeader(SERVER_SOFTWARE);
-//	writeHeader("\r\n");
-//
-//	return true;
+//	/* 只允许通过 add 添加域 */
+//	assert(0);
+//	return 0;
 //}
-
-size_t HTTPResponseHeader::read(byte *buf, size_t len)
-{
-	return _buf.read(buf, len);
-}
-
-bool HTTPResponseHeader::eof()
-{
-	return _buf.eof();
-}
 
 void HTTPResponseHeader::reset()
 {
 	_headers.clear();
-	_buf.trunc();
+	BufferPipe::trunc();
 	_resCode = SC_UNKNOWN;
 }
 
 std::string HTTPResponseHeader::getHeader()
 {
-	return std::string(reinterpret_cast<char*>(_buf.buffer()), _buf.fsize());
+	return std::string(reinterpret_cast<const char*>(buffer()), (int)size());
 }

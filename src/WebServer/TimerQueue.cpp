@@ -83,9 +83,10 @@ __int64 HighResolutionTimer::getMs(__int64 counter)
 #define OPP_CHANGE 2
 #define OPP_REMOVE 3
 
-#define WT_UNDIFINE 0
-#define WT_TIMEOUT 1
-#define WT_RESET 2
+#define TIMERQUEUE_ST_STOP 0
+#define TIMERQUEUE_ST_TIMER 1
+#define TIMERQUEUE_ST_RESET 2
+#define TIMERQUEUE_ST_IDLE 3
 
 
 TimerQueue::TimerQueue(size_t poolSize /* = 256 */)
@@ -97,10 +98,8 @@ TimerQueue::TimerQueue(size_t poolSize /* = 256 */)
 	_poolSize(poolSize),
 	_poolPos(0),
 	_timerPool(NULL),
-	_oppList(NULL),
-	_wakeupType(WT_UNDIFINE),
-	_curTimer(NULL),
-	_stop(false)
+	_state(TIMERQUEUE_ST_STOP),
+	_curTimer(NULL)
 {
 	
 }
@@ -131,7 +130,6 @@ int TimerQueue::init()
 	{	
 		_timerPool = new timer_desc_t*[_poolSize];
 	}
-	_oppList = new opp_list_t;
 
 	/*
 	* 创建工作线程
@@ -141,8 +139,6 @@ int TimerQueue::init()
 		assert(0);
 		return TQ_ERROR;
 	}
-
-	_stop = false;
 	return TQ_SUCCESS;
 }
 
@@ -153,14 +149,13 @@ int TimerQueue::destroy()
 	*/
 	if(_timerThread)
 	{
-		assert(_oppList);
-
 		/*
 		* 添加一个空的定时器作为停止的标志.
 		* 然后等待工作线程退出
 		*/
 		_lock->lock();
-		_stop = true;
+		/* 切换定时器队列的工作状态为停止 */
+		_state = TIMERQUEUE_ST_STOP;
 		wakeup();
 		_lock->unlock();
 
@@ -205,21 +200,14 @@ int TimerQueue::destroy()
 		_poolPos = 0;
 	}
 
-	if(_oppList)
-	{
-		delete _oppList;
-		_oppList = NULL;
-	}
-
 	if(_lock)
 	{
 		delete _lock;
 		_lock = NULL;
 	}
 
-	_stop = false;
 	_curTimer = NULL;
-	_wakeupType = WT_UNDIFINE;
+	_state = TIMERQUEUE_ST_STOP;
 	return TQ_SUCCESS;
 }
 
@@ -268,29 +256,22 @@ TimerQueue::timer_desc_t* TimerQueue::getFirstTimer()
 	return NULL;
 }
 
-bool TimerQueue::isFirstTimer(timer_desc_t* timerPtr)
-{
-	return getFirstTimer() == timerPtr;
-}
-
 int TimerQueue::setNextTimer()
 {
 	/*
 	* 重新设置定时器的时间
 	*/
-	_wakeupType = WT_TIMEOUT;
 	_curTimer = getFirstTimer();
 
 	if(NULL == _curTimer)
 	{
 		/* 没有定时器需要设置 */
-		if(!CancelWaitableTimer(_waitableTimer))
-		{
-			assert(0);
-		}
+		_state = TIMERQUEUE_ST_IDLE;
 	}
 	else
 	{
+		_state = TIMERQUEUE_ST_TIMER;
+
 		LARGE_INTEGER dueTime;
 		__int64 curCounters = _hrt.now();
 		if(curCounters >= _curTimer->expireCounters)
@@ -316,7 +297,7 @@ int TimerQueue::setNextTimer()
 		
 		if(!SetWaitableTimer(_waitableTimer, &dueTime, 0, NULL, NULL, FALSE))
 		{
-			LOGGER_CFATAL(theLogger, _T("SetWaitableTimer failed, error code:%d, handle:%x.\r\n"), GetLastError(), _waitableTimer );
+			//LOGGER_CFATAL(theLogger, _T("SetWaitableTimer failed, error code:%d, handle:%x.\r\n"), GetLastError(), _waitableTimer );
 			assert(0);
 		}
 		//TRACE(_T("SetTimer at:%d.\r\n"), curTime);
@@ -325,60 +306,40 @@ int TimerQueue::setNextTimer()
 	return 0;
 }
 
-void TimerQueue::oppExecute()
-{
-	if(!_oppList->empty())
-	{
-		for(opp_list_t::iterator iter = _oppList->begin(); iter != _oppList->end(); ++iter)
-		{
-			if(OPP_ADD == iter->second)
-			{
-				inqueue(iter->first);
-			}
-			else if(OPP_CHANGE == iter->second)
-			{
-				_timerList->remove(iter->first);
-				inqueue(iter->first);
-			}
-			else if(OPP_REMOVE == iter->second)
-			{
-				_timerList->remove(iter->first);
-				freeTimer(iter->first);
-			}
-			else
-			{
-				assert(0);
-			}
-		}
-		_oppList->clear();
-	}
-}
-
 bool TimerQueue::proc(HANDLE ce)
 {
 	_lock->lock();
 
-	/* 是否退出 */
-	if(_stop)
+	/*
+	* 如果是手动设置的唤醒,则先处理操作队列,因为此时队头定时将要被修改
+	*/
+	if(TIMERQUEUE_ST_STOP == _state)
 	{
 		_lock->unlock();
 		return false;
 	}
-
-	/*
-	* 如果是手动设置的唤醒,则先处理操作队列,因为此时队头定时将要被修改
-	*/
-	if(WT_RESET == _wakeupType)
+	else if(TIMERQUEUE_ST_IDLE == _state)
 	{
-		oppExecute();
+		/* 
+		* 空转一次 
+		* 出现场景:删除最后一个定时器时刚好定时器超时,工作线程已经被激活 proc()和deleteTimer()竞争锁,如果后者先拿到锁,那么最后一个定时器被删除,并且工作状态为 TIMERQUEUE_ST_RESET,并signal 定时器对象.
+		* 此时,然后proc()运行,根据工作状态设置,重置了定时器,由于没有其他排队的定时器了,所以工作状态设置为IDLE,退出.
+		* 由于定时器对象为signal状态,所以proc()又被调度,就到了这里.
+		* 以前没有区分 IDLE 状态和 TIMER 状态,所以_curTimer指针有可能失效.以前那么设计的原因是以为 CancelWaitaleTimer 会重置定时器对象的状态,MSDN上说明很清楚,不会.
+		*/
+	}
+	else if(TIMERQUEUE_ST_RESET == _state)
+	{
 	}
 	else
 	{
 		/*
 		* 处理当前定时器.
 		*/
+		/* _curTimer 和 TIMERQUEUE_ST_TIMER 是同步设置的,所以可以确保 _curTimer指针的有效性 */
 		assert(_curTimer);
 		timer_desc_t* timerDescPtr = _curTimer;
+
 		timerDescPtr->st = TIMER_ST_PROCESSING;
 		timerDescPtr->ev = ce;
 		_lock->unlock();
@@ -391,26 +352,30 @@ bool TimerQueue::proc(HANDLE ce)
 		//TRACE(_T("TimerQueue - Timer deviation: %dms\r\n"), ms);
 
 		/* 执行回调函数 */
-		if(timerDescPtr->funcPtr) timerDescPtr->funcPtr(timerDescPtr->param, TRUE);
+		if(timerDescPtr->funcPtr) timerDescPtr->funcPtr(timerDescPtr, timerDescPtr->param);
 	
 		/*
 		* 由于前面设置了 TIMER_ST_PROCESSING 标志,所以可以确保 timerDescPtr 指针此时是有效的.
 		* 设定结束标志,发送完成通知
 		*/
 		_lock->lock();
-		timerDescPtr->st = TIMER_ST_EXPIRED;
-		if(timerDescPtr->waitting)
+		if(timerDescPtr->st == TIMER_ST_PROCESSING)
 		{
-			SetEvent(timerDescPtr->ev);
+			timerDescPtr->st = TIMER_ST_EXPIRED;
+			if(timerDescPtr->waitting)
+			{
+				SetEvent(timerDescPtr->ev);
+			}
+			if(timerDescPtr->autoDelete)
+			{
+				_timerList->remove(timerDescPtr);
+				freeTimer(timerDescPtr);
+			}
 		}
-		if(timerDescPtr->autoDelete)
+		else
 		{
-			_timerList->remove(timerDescPtr);
-			freeTimer(timerDescPtr);
+			/* 定时器被修改过了 */
 		}
-
-		/* 当前定时器已经处理完毕,执行操作队列 */
-		oppExecute();
 	}
 
 	/* 设置下一个定时器 */
@@ -426,7 +391,7 @@ unsigned int __stdcall TimerQueue::workerProc(void* param)
 	HANDLE completeEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 	if(!completeEvent)
 	{
-		LOGGER_CFATAL(theLogger, _T("无法创建事件对象,错误码:%d\r\n"), GetLastError());
+		//LOGGER_CFATAL(theLogger, _T("无法创建事件对象,错误码:%d\r\n"), GetLastError());
 		return 1;
 	}
 
@@ -500,7 +465,6 @@ bool TimerQueue::inqueue(timer_desc_t* newTimerPtr)
 
 TimerQueue::timer_t TimerQueue::createTimer(DWORD timeout, timer_func_t callbackFunc, void* param)
 {
-	
 	/*
 	* 把新创建的定时器按照超时的时间插入到合适的位置,要确保第一个定时器肯定是最先超时的定时器.
 	*/
@@ -511,7 +475,6 @@ TimerQueue::timer_t TimerQueue::createTimer(DWORD timeout, timer_func_t callback
 	newTimerPtr->funcPtr = callbackFunc;
 	newTimerPtr->param = param;
 	newTimerPtr->waitting = false;
-
 	oppAcquire(newTimerPtr, OPP_ADD);
 	_lock->unlock();
 
@@ -523,17 +486,23 @@ TimerQueue::timer_t TimerQueue::createTimer(DWORD timeout, timer_func_t callback
 */
 int TimerQueue::changeTimer(timer_t timerPtr, DWORD timeout)
 {
+	int ret = TQ_SUCCESS;
+	HANDLE ev = NULL;
 	timer_desc_t* timerDescPtr = reinterpret_cast<timer_desc_t*>(timerPtr);
-	_lock->lock();
-	timerDescPtr->expireCounters = _hrt.now() + _hrt.getCounters(timeout);
-	timerDescPtr->st = TIMER_ST_NORMAL;
-	timerDescPtr->waitting = false;
 
+	_lock->lock();
+	timerDescPtr->st = TIMER_ST_NORMAL;
+	timerDescPtr->expireCounters = _hrt.now() + _hrt.getCounters(timeout);
+	timerDescPtr->waitting = false;
 	oppAcquire(timerDescPtr, OPP_CHANGE);
 	_lock->unlock();
-	return TQ_SUCCESS;
+
+	return ret;
 }
 
+/*
+* 在一个定时器的超时回调函数内删除本定时器应该使 wait = false 否则会死锁.
+*/
 int TimerQueue::deleteTimer(timer_t timerPtr, bool wait)
 {
 	int ret = TQ_SUCCESS;
@@ -571,53 +540,50 @@ int TimerQueue::deleteTimer(timer_t timerPtr, bool wait)
 
 void TimerQueue::oppAcquire(timer_desc_t* timerPtr, int oppType)
 {
-	_oppList->push_back(std::make_pair(timerPtr, oppType));
-	
-	/*
-	* 只有队头被移动后才需要唤醒工作线程,重新设置定时器
-	*/
-	bool wake = false;
-	if(oppType == OPP_ADD)
+	if(OPP_ADD == oppType)
 	{
-		// 新定时器比当前定时器更快超时,需要重新设置定时器.
-		wake = (_curTimer == NULL || timerPtr->expireCounters < _curTimer->expireCounters);
+		inqueue(timerPtr);
 	}
-	else if(oppType == OPP_CHANGE)
+	else if(OPP_CHANGE == oppType)
 	{
-		// 当前定时器被更改或者修改后的定时器比当前定时器更快超时.
-		wake = (timerPtr == _curTimer || timerPtr->expireCounters < _curTimer->expireCounters);
+		_timerList->remove(timerPtr);
+		inqueue(timerPtr);
+	}
+	else if(OPP_REMOVE == oppType)
+	{
+		_timerList->remove(timerPtr);
+		freeTimer(timerPtr);
+		if(timerPtr == _curTimer)
+		{
+			_curTimer = NULL;
+		}
 	}
 	else
 	{
-		// 当前定时器被删除.
-		wake = (_curTimer == NULL || timerPtr == _curTimer);
 	}
-
-	if(wake)
+	
+	/*
+	* 只有队头有变化才需要唤醒工作线程,重新设置定时器.
+	*/
+	if(NULL == _curTimer || timerPtr == _curTimer || timerPtr->expireCounters < _curTimer->expireCounters)
 	{
-		wakeup();
+		/* 把定时器队列的工作状态切换到重置,并激活工作线程以重置定时器对象 */
+		if(_state != TIMERQUEUE_ST_RESET)
+		{
+			_state = TIMERQUEUE_ST_RESET;
+			wakeup();
+		}
 	}
 }
 
 void TimerQueue::wakeup()
 {
-	if(_wakeupType != WT_RESET)
-	{
-		_wakeupType = WT_RESET;
+	LARGE_INTEGER dueTime;
+	dueTime.QuadPart = 0;
 
-		LARGE_INTEGER dueTime;
-		dueTime.QuadPart = 0;
-
-		if(!SetWaitableTimer(_waitableTimer, &dueTime, 0, NULL, NULL, FALSE))
-		{
-			LOGGER_CFATAL(theLogger, _T("wakeup failed, error code:%d, handle:%x.\r\n"), GetLastError(), _waitableTimer );
-			assert(0);
-		}
-	}
-	else
+	if(!SetWaitableTimer(_waitableTimer, &dueTime, 0, NULL, NULL, FALSE))
 	{
-		/*
-		* 已经手动触发 _waitableTimer, 不需要再次触发
-		*/
+		//LOGGER_CFATAL(theLogger, _T("wakeup failed, error code:%d, handle:%x.\r\n"), GetLastError(), _waitableTimer );
+		assert(0);
 	}
 }

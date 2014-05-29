@@ -9,142 +9,69 @@
 #include "StdAfx.h"
 #include "HTTPRequest.h"
 
-HTTPRequest::HTTPRequest(IHTTPServer *server, IOCPNetwork *network) :
-	_hrt(true), _header(1024, MAX_REQUESTHEADERSIZE), _postFile(NULL), _isHeaderRecved(false), _bytesRecv(0),
-	_server(server), _network(network), _sockBuf(NULL), _sockBufLen(0), _connId(NULL), _postData(NULL),
-	_postFileName(""), _contentLength(0), _startTime(0)
+HTTPRequest::HTTPRequest(IHTTPServer *server) 
+	: _httpHeader(NULL), _cachePipe(NULL), _httpPostData(NULL), _server(server), _contentLength(0), _bytesRecved(0), _bytesSent(0)
 {
+	_cachePipe = new BufferPipe(MAX_REQUESTHEADERSIZE, K_BYTES);
 }
 
 HTTPRequest::~HTTPRequest()
 {
+	if(_cachePipe) delete _cachePipe;
+	if(_httpHeader) delete _httpHeader;
+	if(_httpPostData) delete _httpPostData;
 }
-
-size_t HTTPRequest::push(const byte* data, size_t len)
-{
-	if(_isHeaderRecved)
-	{
-		if( _postData )
-		{
-			size_t maxLen = contentLength() - _postData->tellp();
-			if( len > maxLen ) len = maxLen;
-			return _postData->write(data, len);
-		}
-		else if( _postFile )
-		{
-			//size_t maxLen = contentLength() - ftell(_postFile);
-			size_t maxLen = contentLength() - static_cast<size_t>(_postFile->tell());
-			if( len > maxLen ) len = maxLen;
-			//return fwrite(data, 1, len, _postFile);
-			return _postFile->write(data, len);
-		}
-		else
-		{
-			/*
-			* 根据 Content-Length 的值确定是在内存中缓存还是使用文件系统缓存.
-			*/
-			if( contentLength() > POST_DATA_CACHE_SIZE)
-			{
-				_postFileName = _server->tmpFileName();
-				_postFile = new WINFile;
-				if(!_postFile->open(AtoT(_postFileName).c_str(), WINFile::rw, true))
-				{
-					assert(0);
-					LOGGER_CFATAL(theLogger, _T("无法打开临时文件[%s],错误码[%d].\r\n"), AtoT(_postFileName).c_str(), errno);
-					return 0;
-				}
-			}
-			else
-			{
-				_postData = new memfile(1024, POST_DATA_CACHE_SIZE);
-				assert(_postData);
-			}
-			return push(data, len);
-		}
-	}
-	else
-	{
-		/*
-		* 一个字符一个字符写入,直到连续两个换行.
-		*/
-
-		size_t i = 0;
-		for(; i < len; ++i)
-		{
-			if( 1 != _header.write(&data[i], 1))
-			{
-				/* 超出 HTTP Request 头的长度限制了 */
-				/* 凡是从客户端读取的数据都是不安全的数据,所以设置了一个最大值 */
-				assert(0);
-				return 0;
-			}
-
-			if(is_end(reinterpret_cast<const byte*>(_header.buffer()), _header.fsize()))
-			{
-				/*
-				* 已经接收到一个完整的请求头
-				*/
-				_contentLength = atoi(field("Content-Length").c_str());
-				_isHeaderRecved = true;
-				++i; 
-
-				if(_contentLength >= MAX_POST_DATA)
-				{
-					/* 检查 content-length 长度是否超出限制 */
-					assert(0);
-					return 0;
-				}
-
-				if(i < len)
-				{
-					/* 还有数据 */
-					i += push(data + i, len - i);
-				}
-
-				break;
-			}
-		}
-
-		return i;
-	}
-}
-
 
 bool HTTPRequest::isValid()
 {
-	if(_isHeaderRecved)
+	if(_httpHeader)
 	{
-		if( _postData ) return _postData->tellp() == contentLength();
-		else if(_postFile) return contentLength() == static_cast<size_t>(_postFile->tell());
-		else return contentLength() == 0;
-	}
-	return false;
-}
-
-size_t HTTPRequest::headerSize()
-{
-	return _header.fsize();
-}
-
-size_t HTTPRequest::size()
-{
-	if( _postFile )
-	{
-		return headerSize() + static_cast<size_t>(_postFile->tell());
-	}
-	else if( _postData )
-	{
-		return headerSize() + _postData->tellp();
+		// 检查是否已经收到了完整的请求头
+		const char* header = NULL;
+		size_t headerLen = 0;
+		getHeaderBuffer(&header, &headerLen);
+		
+		if(http_request_end(header, headerLen) > 0)
+		{
+			if(contentLength() == 0 || (_httpPostData && _httpPostData->size() == contentLength()))
+			{
+				return true;
+			}
+			else
+			{
+				// content length 不正确.
+			}
+		}
+		else
+		{
+			// 请求头不完整.
+		}
 	}
 	else
 	{
-		return headerSize();
+		// 没有接收到请求头.
+	}
+
+	return false;
+}
+
+void HTTPRequest::getHeaderBuffer(const char** buf, size_t *len)
+{
+	if(_httpHeader)
+	{
+		*buf = (const char*)_httpHeader->buffer();
+		*len = (size_t)_httpHeader->size();
+	}
+	else
+	{
+		*buf = NULL;
+		*len = 0;
 	}
 }
 
 bool HTTPRequest::keepAlive()
 {
-	return field("Connection") == std::string("keep-alive");
+	return stricmp(field("Connection").c_str(), "keep-alive") == 0;
 }
 
 size_t HTTPRequest::contentLength()
@@ -154,14 +81,18 @@ size_t HTTPRequest::contentLength()
 
 HTTP_METHOD HTTPRequest::method()
 {
+	const char* header = NULL;
+	size_t headerLen = 0;
+	getHeaderBuffer(&header, &headerLen);
+
 	// 取出 HTTP 方法
 	char szMethod[MAX_METHODSIZE] = {0};
 	int nMethodIndex = 0;
-	for(size_t i = 0; i < MAX_METHODSIZE && i < _header.fsize(); ++i)
+	for(size_t i = 0; i < MAX_METHODSIZE && i < headerLen; ++i)
 	{
-		if(reinterpret_cast<const char*>(_header.buffer())[i] != ' ')
+		if(header[i] != ' ')
 		{
-			szMethod[nMethodIndex++] = reinterpret_cast<const char*>(_header.buffer())[i];
+			szMethod[nMethodIndex++] = header[i];
 		}
 		else
 		{
@@ -184,12 +115,16 @@ HTTP_METHOD HTTPRequest::method()
 // 返回客户端请求对象, 如果返回空字符串,说明客户端请求格式错误.
 std::string HTTPRequest::uri(bool decode)
 {
+	const char* header = NULL;
+	size_t headerLen = 0;
+	getHeaderBuffer(&header, &headerLen);
+
 	std::string strObject("");
-	const char* lpszRequest = reinterpret_cast<const char*>(_header.buffer());
+	const char* lpszRequest = header;
 	const char *pStart = NULL, *pEnd = NULL;
 
 	// 第一行的第一个空格的下一个字符开始是请求的文件名开始.
-	for(size_t i = 0; i < _header.fsize(); ++i)
+	for(size_t i = 0; i < headerLen; ++i)
 	{
 		if(lpszRequest[i] == ' ')
 		{
@@ -201,7 +136,6 @@ std::string HTTPRequest::uri(bool decode)
 	if(pStart == NULL)
 	{
 		// 找不到开始位置
-		assert(0);
 		return strObject;
 	}
 
@@ -240,7 +174,11 @@ std::string HTTPRequest::uri(bool decode)
 
 std::string HTTPRequest::field(const char* pszKey)
 {
-	return get_field(reinterpret_cast<const char*>(_header.buffer()), pszKey);
+	const char* header = NULL;
+	size_t headerLen = 0;
+	getHeaderBuffer(&header, &headerLen);
+
+	return get_field(header, pszKey);
 }
 
 bool HTTPRequest::range(__int64 &lFrom, __int64 &lTo)
@@ -248,7 +186,11 @@ bool HTTPRequest::range(__int64 &lFrom, __int64 &lTo)
 	__int64 nFrom = 0;
 	__int64 nTo = -1; // -1 表示到最后一个字节.
 
-	const char* lpszRequest = reinterpret_cast<const char*>(_header.buffer());
+	const char* header = NULL;
+	size_t headerLen = 0;
+	getHeaderBuffer(&header, &headerLen);
+
+	const char* lpszRequest = header;
 	const char* pRange = strstr(lpszRequest, "\r\nRange: bytes=");
 	if(pRange)
 	{
@@ -305,193 +247,192 @@ bool HTTPRequest::range(__int64 &lFrom, __int64 &lTo)
 	return false;
 }
 
-size_t HTTPRequest::read(byte* buf, size_t len)
+std::string HTTPRequest::getHeader()
 {
-	if(_postData)
-	{
-		return _postData->read(buf, len);
-	}
-	else if(_postFile)
-	{
-		return _postFile->read(buf, len);
-		//return fread(buf, 1, len, _postFile);
-	}
-	else
-	{
-		return 0;
-	}
+	const char* header = NULL;
+	size_t headerLen = 0;
+	getHeaderBuffer(&header, &headerLen);
+	
+	return header;
 }
 
-bool HTTPRequest::eof()
+IPipe* HTTPRequest::getPostData()
 {
-	if(_postData)
+	return _httpPostData;
+}
+
+void HTTPRequest::nextRequest()
+{
+	if(_httpHeader) delete _httpHeader;
+	if(_httpPostData) delete _httpPostData;
+	_httpHeader = NULL;
+	_httpPostData = NULL;
+	_contentLength = 0;
+	_bytesRecved = 0;
+	_bytesSent = 0;
+
+	// 状态机状态重置
+	backward(current());
+}
+
+bool HTTPRequest::beforeStep(IOAdapter* adp, int ev, stm_result_t* res)
+{
+	if(TEST_BIT(ev, IO_EVENT_EPOLLERR))
 	{
-		return _postData->eof();
+		/* 套接字错误 */
+		res->rc = STM_ABORT;
+		res->param.errorCode = SE_RECVFAILD;
+		return false;
 	}
-	else if(_postFile)
+	if(TEST_BIT(ev, IO_EVENT_EPOLLHUP))
 	{
-		//return feof(_postFile) != 0;
-		return _postFile->eof();
+		/* 对方已经关闭了连接 */
+		res->rc = STM_ABORT;
+		res->param.errorCode = SE_REMOTEFAILD;
+		return false;
 	}
-	else
+
+	return true;
+}
+
+bool HTTPRequest::step0(IOAdapter* adp, int ev, stm_result_t* res)
+{
+	assert(_cachePipe);
+
+	/* 创建一个请求头的接收代理,用来接收请求头和POSTdata */
+	build_pipes_chain((IPipe*)adp, (IPipe*)_cachePipe);
+	forward();
+
+	res->rc = STM_CONTINUE;
+	res->param.epollEvent = IO_EVENT_EPOLLIN;
+	return false;
+}
+
+bool HTTPRequest::step1(IOAdapter* adp, int ev, stm_result_t* res)
+{
+	// 读取套接字数据
+	size_t rd = _cachePipe->pump();
+	_bytesRecved += rd;
+	if(0 == rd)
 	{
+		// 请求头长度超过限制
+		assert(0);
+		forward(2);
 		return true;
 	}
-}
-
-bool HTTPRequest::reset()
-{
-	_connId = INVALID_CONNID;
-	_clientSock = NULL;
-	if(_sockBuf)
-	{
-		delete []_sockBuf;
-		_sockBuf = NULL;
-	}
-	_sockBufLen = 0;
-	if(_postFile)
-	{
-		_postFile->close();
-		delete _postFile;
-		_postFile = NULL;
-
-		// 临时文件,close() 后自动删除,不需要调用 remove()
-		// WINFile::remove(AtoT(_postFileName).c_str());
-	}
-	if(_postData)
-	{
-		delete _postData;
-		_postData = NULL;
-	}
-	
-	_isHeaderRecved = false;
-	_header.trunc();
-	_bytesRecv = 0;
-	_startTime = 0;
-	return true;
-}
-
-int HTTPRequest::run(conn_id_t connId, iocp_key_t clientSock, size_t timeout)
-{
-	/*
-	* timeout: 第一个 recv 操作的超时时间,如果是 keep-alive 保持的连接,这个值可能会和新建连接的值不同
-	*/
-	assert(_sockBuf == NULL);
-	if(_sockBuf)
-	{
-		return CT_INTERNAL_ERROR;
-	}
-
-	_clientSock = clientSock;
-	_sockBuf = new byte[MAX_SOCKBUFF_SIZE];
-	_sockBufLen = MAX_SOCKBUFF_SIZE;
-	_connId = connId;
-
-	/*
-	* 开始接收请求头
-	*/
-	if(IOCP_PENDING == _network->recv(_clientSock, _sockBuf, _sockBufLen, timeout, IOCPCallback, this))
-	{
-		return CT_SUCESS;
-	}
 	else
 	{
-		reset();
-		return CT_CLIENTCLOSED;
-	}
-}
-
-bool HTTPRequest::stop(int ec)
-{
-	return true;
-}
-
-void HTTPRequest::deleteSocketBuf()
-{
-	assert(_sockBuf);
-	delete []_sockBuf;
-	_sockBuf = NULL;
-	_sockBufLen = 0;
-}
-
-void HTTPRequest::close(int exitCode)
-{
-	/* 删除缓冲区,不再需要了 */
-	deleteSocketBuf();
-	_server->onRequest(this, exitCode);
-}
-
-void HTTPRequest::onRecv(int flags, size_t bytesTransfered)
-{
-	/* 接收失败 */
-	if(bytesTransfered == 0)
-	{
-		if(flags & IOCP_READTIMEO)
+		// 判断是否已经读取到完整的请求头
+		int headerlen = http_request_end((const char*)_cachePipe->buffer(), (size_t)_cachePipe->size());
+		if(headerlen < 0)
 		{
-			close(CT_RECV_TIMEO);
+			// 继续接收请求头
 		}
 		else
 		{
-			close(CT_CLIENTCLOSED);
-		}
-		return;
-	}
+			// 把请求头从缓存中读出单独保存.之所以设计一个缓存是为了处理HTTP1.1协议的"管道化连接"(客户端在收到第一个回应之前可能连续发送若干个请求头)
+			// 服务器端总是依次处理.
+			assert(_httpHeader == NULL);
+			_httpHeader = new BufferPipe(MAX_REQUESTHEADERSIZE, K_BYTES);
+			size_t plen = _httpHeader->pump(headerlen, _cachePipe);
+			assert(plen == headerlen);
 
-	/* 接收成功 */
+			 // 请求头是字符串,写个0结尾.
+			char c = 0;
+			_httpHeader->write(&c, 1);
 
-	/* 收到第一段请求头的数据时,作为请求开始的时间记录下来*/
-	if(0 == _startTime) _startTime = _hrt.now();
-
-	_bytesRecv += bytesTransfered;
-	_server->onRequestDataReceived(this, bytesTransfered);
-
-	size_t bytesPushed = push(_sockBuf, bytesTransfered);
-	if(isValid())
-	{
-		assert(bytesTransfered == bytesPushed);
-
-		/* 把文件指针移到起始位置,准备读 */
-		if( _postFile )
-		{
-			//fseek(_postFile, 0, SEEK_SET);
-			_postFile->seek(0, WINFile::s_set);
-		}
-
-		/* HTTP Request 接收完毕 */
-		close(CT_SUCESS);
-	}
-	else
-	{
-		if( bytesPushed != bytesTransfered )
-		{
-			/* 超出长度限制,需要给客户端返回 400 错误,所以用 CT_SUCESS 退出码 */
-			close(CT_SUCESS);
-		}
-		else
-		{
-			int netIoRet = _network->recv(_clientSock, _sockBuf, MAX_SOCKBUFF_SIZE, _server->recvTimeout(), IOCPCallback, this);
-			if(IOCP_PENDING != netIoRet)
+			// 设置Content-Length的值,之后可以访问 contentLength() 直接获取,而不用再请求头文本内查找.
+			_contentLength = atoi(field("Content-Length").c_str());
+			if(contentLength() >= MAX_POST_DATA)
 			{
-				close(netIoRet == IOCP_SESSIONTIMEO ? CT_SESSION_TIMEO : CT_CLIENTCLOSED);
+				/* content-length 长度超出限制 */
+				forward(2);
+				return true;
+			}
+			else if(contentLength() > 0)
+			{
+				// 如果长度超过 POST_DATA_CACHE_SIZE 则用临时文件,否则直接在内存中缓冲.
+				if(contentLength() > POST_DATA_CACHE_SIZE)
+				{
+					_httpPostData = new FilePipe(_server->tmpFileName());
+				}
+				else
+				{
+					_httpPostData = new BufferPipe(POST_DATA_CACHE_SIZE, (4 * K_BYTES));
+				}
+				_httpPostData->link(_cachePipe);
+
+
+				/* 从 _cachePipe 读取POST DATA */
+				forward();
+				return true;
 			}
 			else
 			{
-				/* 继续接收 */
+				// 没有POST数据
+				forward(2);
+				return true;
 			}
+		}// continue to receive header
+	}// continue to pump
+
+	// 继续接收请求头
+	res->rc = STM_CONTINUE;
+	res->param.epollEvent = IO_EVENT_EPOLLIN;
+	return false;
+}
+
+bool HTTPRequest::step2(IOAdapter* adp, int ev, stm_result_t* res)
+{
+	assert(_httpPostData);
+	size_t maxlen = contentLength() - (size_t)_httpPostData->size();
+	size_t rd = 0;
+
+	// 接收post数据
+	if(_cachePipe->size() > 0)
+	{
+		// 数据已经先读取到缓存中,不要重复统计.
+		rd = _httpPostData->pump(maxlen);
+	}
+	else
+	{
+		// 直接从 IOAdapter 中读取
+		rd = _httpPostData->pump(maxlen);
+		_bytesRecved += rd;
+
+		if(rd == 0)
+		{
+			// 400 Bad request
+			forward();
+			return true;
 		}
+	}
+
+	if(_httpPostData->size() >= contentLength())
+	{
+		// POST DATA接收完毕.
+		_httpPostData->unlink();
+		
+		forward();
+		return true;
+	}
+	else
+	{
+		// 继续接收 POST 数据
+		res->rc = STM_CONTINUE;
+		res->param.epollEvent = IO_EVENT_EPOLLIN;
+		return false;
 	}
 }
 
-void HTTPRequest::IOCPCallback(iocp_key_t s, int flags, bool result, int transfered, byte* buf, size_t len, void* param)
+bool HTTPRequest::step3(IOAdapter* adp, int ev, stm_result_t* res)
 {
-	HTTPRequest* instPtr = reinterpret_cast<HTTPRequest*>(param);
-	assert(flags & IOCP_RECV);
-	instPtr->onRecv(flags, transfered);
+	res->rc = STM_DONE;
+	return false;
 }
 
-std::string HTTPRequest::getHeader()
+void HTTPRequest::statistics(__int64* bytesRecved, __int64* bytesSent)
 {
-	if(!_isHeaderRecved) return std::string("");
-
-	return std::string(reinterpret_cast<char*>(_header.buffer()), _header.fsize());
+	*bytesRecved = _bytesRecved;
+	*bytesSent = _bytesSent;
 }

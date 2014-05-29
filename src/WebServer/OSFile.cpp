@@ -1,29 +1,35 @@
 #include "StdAfx.h"
-#include "WINFile.h"
-
-WINFile::WINFile()
+#include "OSFile.h"
+#include "ATW.h"
+#if defined(WIN32)
+OSFile::OSFile()
 	: _h(INVALID_HANDLE_VALUE)
 {
 }
 
-
-WINFile::~WINFile()
+OSFile::~OSFile()
 {
 	close();
 }
 
-bool WINFile::exist(const TCHAR *fileName)
+
+bool OSFile::exist(const char *fileName)
 {
-	return INVALID_FILE_ATTRIBUTES != GetFileAttributes(fileName);
+	return INVALID_FILE_ATTRIBUTES != GetFileAttributes(AtoT(fileName).c_str());
 	// && ERROR_FILE_NOT_FOUND == GetLastError())
 }
 
-bool WINFile::remove(const TCHAR *fileName)
+bool OSFile::remove(const char *fileName)
 {
-	return DeleteFile(fileName) == TRUE;
+	return DeleteFile(AtoT(fileName).c_str()) == TRUE;
 }
 
-bool WINFile::open(const TCHAR *fileName, unsigned int mode, bool tmp)
+bool OSFile::isopen()
+{
+	return _h != INVALID_HANDLE_VALUE;
+}
+
+bool OSFile::open(const TCHAR *fileName, unsigned int mode, bool tmp)
 {
 	if(INVALID_HANDLE_VALUE != _h) return false;
 	DWORD dwCreateFlag = 0;
@@ -58,7 +64,7 @@ bool WINFile::open(const TCHAR *fileName, unsigned int mode, bool tmp)
 	return _h != INVALID_HANDLE_VALUE;
 }
 
-bool WINFile::close()
+bool OSFile::close()
 {
 	if(INVALID_HANDLE_VALUE == _h) return false;
 
@@ -75,7 +81,7 @@ bool WINFile::close()
 	return ret == TRUE;
 }
 
-bool WINFile::trunc()
+bool OSFile::trunc()
 {
 	if(INVALID_HANDLE_VALUE == _h) return false;
 
@@ -83,7 +89,7 @@ bool WINFile::trunc()
 	return SetEndOfFile(_h) == TRUE;
 }
 
-unsigned long WINFile::read(void *buf, unsigned long len)
+unsigned long OSFile::read(void *buf, unsigned long len)
 {
 	if(INVALID_HANDLE_VALUE == _h) return 0;
 
@@ -96,7 +102,7 @@ unsigned long WINFile::read(void *buf, unsigned long len)
 	return bytesRd;
 }
 
-unsigned long WINFile::write(const void *buf, unsigned long len)
+unsigned long OSFile::write(const void *buf, unsigned long len)
 {
 	if(INVALID_HANDLE_VALUE == _h) return 0;
 
@@ -109,7 +115,7 @@ unsigned long WINFile::write(const void *buf, unsigned long len)
 	return bytesWr;
 }
 
-__int64 WINFile::tell()
+__int64 OSFile::tell()
 {
 	if(INVALID_HANDLE_VALUE == _h) return -1;
 
@@ -125,7 +131,7 @@ __int64 WINFile::tell()
 	return pos.QuadPart;
 }
 
-__int64 WINFile::seek(__int64 off, DWORD mode)
+__int64 OSFile::seek(__int64 off, DWORD mode)
 {
 	if(INVALID_HANDLE_VALUE == _h) return -1;
 
@@ -141,7 +147,7 @@ __int64 WINFile::seek(__int64 off, DWORD mode)
 	return pos.QuadPart;
 }
 
-__int64 WINFile::size()
+__int64 OSFile::size()
 {
 	if(INVALID_HANDLE_VALUE == _h) return -1;
 
@@ -156,9 +162,10 @@ __int64 WINFile::size()
 	return sz.QuadPart;
 }
 
-bool WINFile::eof()
+bool OSFile::eof()
 {
 	if(INVALID_HANDLE_VALUE == _h) return true;
 
 	return tell() >= size();
 }
+#endif

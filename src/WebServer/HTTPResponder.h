@@ -7,8 +7,7 @@
 */
 
 #pragma once
-#include "HTTPDef.h"
-#include "memfile.h"
+#include "HTTPLib.h"
 #include "HTTPResponseHeader.h"
 #include "HTTPRequest.h"
 
@@ -19,44 +18,31 @@
 */
 
 class HTTPContent;
-class HTTPResponder : public IResponder, public INoCopy
+class HTTPResponder : public IResponder
 {
 protected:
 	HTTPResponseHeader _header;
 	IRequest *_request;
 	IHTTPServer *_server;
-	IOCPNetwork *_network;
-	iocp_key_t _clientSock;
-	conn_id_t _connId;
-	__int64 _bytesSent;
-	__int64 _bytesRecv;
-	int _svrCode;
 	HTTPContent* _content;
-	byte* _sockBuf;
-	size_t _sockBufLen;
+	__int64 _bytesRecved;
+	__int64 _bytesSent;
+	int _svrCode;
 
-	static void IOCPCallback(iocp_key_t s, int flags, bool result, int transfered, byte* buf, size_t len, void* param);
-	void onSend(size_t bytesTransfered, int flags);
-	
-	bool makeResponseHeader(int svrCode);
-	bool sendToClient();
-	void close(int ct);
+	bool makeResponseHeader(int svrCode);	
+	void getHeaderBuffer(const char** buf, size_t *len);
+	bool beforeStep(IOAdapter* adp, int ev, stm_result_t* res);
+	bool step0(IOAdapter* adp, int ev, stm_result_t* res);
+	bool step1(IOAdapter* adp, int ev, stm_result_t* res);
+	bool step2(IOAdapter* adp, int ev, stm_result_t* res);
 
 public:
-	HTTPResponder(IHTTPServer *server, IOCPNetwork *network);
+	HTTPResponder(IHTTPServer *server, IRequest *req);
+	HTTPResponder(IHTTPServer *server, IRequest *req, int sc, const char* msg);
 	virtual ~HTTPResponder();
 
-	inline conn_id_t getConnectionId() { return _connId; }
-	inline __int64 getTotalSentBytes() { return _bytesSent; }
-	inline __int64 getTotalRecvBytes() { return _bytesRecv; }
-	inline int getServerCode() { return _svrCode; }
-	
-	/*
-	* ∑µªÿœÏ”¶Õ∑
-	*/
+	IRequest* getRequest();
 	std::string getHeader();
-
-	int run(conn_id_t connId, iocp_key_t clientSock, IRequest *request);
-	bool stop(int ec);
-	bool reset();
+	int getServerCode();
+	void statistics(__int64* bytesRecved, __int64* bytesSent);
 };

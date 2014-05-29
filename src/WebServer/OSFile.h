@@ -10,20 +10,14 @@
 
 /*
 * 由于系统对于使用C标准库函数 fopen() 同时打开的文件数有限制(一般是512, 可用 _setmaxstdio() 增大到2048)
-* 对于 HTTP 服务器来说是远远不够的,所以 class WINFile 直接调用 Windows File API 来实现和 C标准库函数同样的功能.
-* WINFile 同时打开的文件数可以达到 16384,并且可以通过 Windows 的启动参数 --max-open-files=N 来修改.
+* 对于 HTTP 服务器来说是远远不够的,所以 class OSFile 直接调用 Windows File API 来实现和 C标准库函数同样的功能.
+* OSFile 同时打开的文件数可以达到 16384,并且可以通过 Windows 的启动参数 --max-open-files=N 来修改.
 *
 */
 
-class WINFile : public INoCopy
+class OSFile
 {
-private:
-	HANDLE _h;
-
 public:
-	WINFile();
-	~WINFile();
-
 	/*
 	* 打开模式
 	*/
@@ -38,13 +32,19 @@ public:
 	static const int s_set = FILE_BEGIN;
 	static const int s_end = FILE_END;
 
-	static bool exist(const TCHAR *fileName);
-	static bool remove(const TCHAR *fileName);
-
+	static bool exist(const char *fileName);
+	static bool remove(const char *fileName);
+#if defined(WIN32)
+private:
+	HANDLE _h;
+#endif
+public:
+	OSFile();
+	virtual ~OSFile();
 	bool open(const TCHAR *fileName, unsigned int mode, bool tmp = false);
 	bool close();
 	bool trunc();
-	bool isopen() { return _h != INVALID_HANDLE_VALUE; }
+	bool isopen();
 	bool eof();
 
 	unsigned long read(void *buf, unsigned long len);
@@ -53,4 +53,3 @@ public:
 	__int64 tell();
 	__int64 size();
 };
-

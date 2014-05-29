@@ -3,7 +3,7 @@
 
 
 #pragma once
-
+#include "HTTPLib.h"
 // CChildView ´°¿Ú
 
 class CChildView : public CWnd, public slogger::Appender

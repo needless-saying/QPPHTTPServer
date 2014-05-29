@@ -4,7 +4,7 @@
 #include "stdafx.h"
 
 #include "WebServer.h"
-#include "HTTPConfig.h"
+#include "HTTPConfigXml.h"
 
 #include "MainFrm.h"
 #include "SettingDlg.h"
@@ -22,7 +22,7 @@
 #define CHECKTIME_SPEED 2000 /*每个多少毫秒刷新一次带宽*/
 
 HTTPServer theServer;
-HTTPConfig theConf;
+HTTPConfigXml theConf;
 
 // CMainFrame
 
@@ -254,7 +254,7 @@ BOOL CMainFrame::OnCmdMsg(UINT nID, int nCode, void* pExtra, AFX_CMDHANDLERINFO*
 
 void CMainFrame::OnStart()
 {
-	if( SE_SUCCESS == theServer.run(&theConf, this))
+	if( SE_SUCCESS == theServer.start(&theConf))
 	{
 		ResetStatus();
 		m_uTimer = SetTimer(IDT_UPDATE_SPEED, CHECKTIME_SPEED, NULL);
@@ -294,12 +294,12 @@ void CMainFrame::ResetStatus()
 void CMainFrame::OnUpdateStart(CCmdUI *pCmdUI)
 {
 	// TODO: Add your command update UI handler code here
-	pCmdUI->Enable(!theServer.runing());
+	//pCmdUI->Enable(!theServer.runing());
 }
 
 void CMainFrame::OnStop()
 {
-	if(theServer.runing())
+	//if(theServer.runing())
 	{
 		int hm = theServer.stop();
 		if(hm == SE_SUCCESS)
@@ -312,7 +312,7 @@ void CMainFrame::OnStop()
 void CMainFrame::OnUpdateStop(CCmdUI *pCmdUI)
 {
 	// TODO: Add your command update UI handler code here
-	pCmdUI->Enable(theServer.runing());
+	//pCmdUI->Enable(theServer.runing());
 }
 
 void CMainFrame::OnSetting()
@@ -338,8 +338,8 @@ void CMainFrame::OnSetting()
 	dlg.m_strLogFileName = AtoT(theConf.logFileName()).c_str();
 	dlg.m_bWindowLog = theConf.screenLog();
 
-	fcgi_server_t phpInf;
-	memset(&phpInf, 0, sizeof(fcgi_server_t));
+	fcgi_server_ctx_t phpInf;
+	memset(&phpInf, 0, sizeof(fcgi_server_ctx_t));
 	theConf.getFirstFcgiServer(&phpInf);
 	dlg.m_bEnablePHP = phpInf.status ? TRUE : FALSE;
 	dlg.m_strPHPExts = AtoT(phpInf.exts).c_str();
@@ -373,8 +373,8 @@ void CMainFrame::OnSetting()
 		theConf.setLogFileName(TtoA(dlg.m_strLogFileName));
 		theConf.enableScreenLog(dlg.m_bWindowLog == TRUE);
 
-		fcgi_server_t phpInf;
-		memset(&phpInf, 0, sizeof(fcgi_server_t));
+		fcgi_server_ctx_t phpInf;
+		memset(&phpInf, 0, sizeof(fcgi_server_ctx_t));
 		strcpy(phpInf.name, "PHP");
 		phpInf.status = dlg.m_bEnablePHP == TRUE;
 		strncpy(phpInf.exts, TtoA(dlg.m_strPHPExts).c_str(), MAX_PATH);

@@ -8,11 +8,9 @@
 
 #pragma once
 
-#include "HTTPDef.h"
-#include "HTTPContent.h"
-#include "memfile.h"
-#include "IOCPNetwork.h"
-
+#include "HTTPLib.h"
+#include "Pipes/BufferPipe.h"
+#include "Pipes/FilePipe.h"
 /*
 * HTTP 协议中的"请求"报文的封装
 *
@@ -20,54 +18,38 @@
 * 
 */
 
-class HTTPRequest : public IRequest, public INoCopy
+class HTTPRequest : public IRequest
 {
 protected:
-	HighResolutionTimer _hrt;
-	memfile _header;
-	memfile *_postData;
-	WINFile *_postFile;
-	std::string _postFileName;
-	bool _isHeaderRecved;
+	BufferPipe* _cachePipe;
+	BufferPipe* _httpHeader;
+	IPipe* _httpPostData;
 	IHTTPServer *_server;
-	IOCPNetwork *_network;
-	iocp_key_t _clientSock;
-	byte* _sockBuf;
-	size_t _sockBufLen;
-	conn_id_t _connId;
-	size_t _bytesRecv;
 	size_t _contentLength;
-	__int64 _startTime;
+	__int64 _bytesRecved;
+	__int64 _bytesSent;
 
-	void deleteSocketBuf();
-	void close(int exitCode);
-	size_t push(const byte* data, size_t len); // 套接字收到数据后,推入到 HTTP Request 实例中.
-	void onRecv(int flags, size_t bytesTransfered);
-	static void IOCPCallback(iocp_key_t s, int flags, bool result, int transfered, byte* buf, size_t len, void* param);
+	void getHeaderBuffer(const char** buf, size_t *len);
+	bool beforeStep(IOAdapter* adp, int ev, stm_result_t* res);
+	bool step0(IOAdapter* adp, int ev, stm_result_t* res);
+	bool step1(IOAdapter* adp, int ev, stm_result_t* res);
+	bool step2(IOAdapter* adp, int ev, stm_result_t* res);
+	bool step3(IOAdapter* adp, int ev, stm_result_t* res);
 
 public:
-	HTTPRequest(IHTTPServer *server, IOCPNetwork *network);
+	HTTPRequest(IHTTPServer *server);
 	virtual ~HTTPRequest();
 
-	inline conn_id_t getConnectionId() { return _connId; }
-	inline size_t getTotalRecvBytes() { return _bytesRecv; }
+	/* IRequest */
 	HTTP_METHOD method(); // 返回HTTP 方法
 	std::string uri(bool decode); // 返回客户端请求的对象(已经经过UTF8解码,所以返回宽字符串)
 	std::string field(const char* key); // 返回请求头中的一个字段(HTTP头中只有ANSI字符,所以返回string).
 	bool range(__int64 &from, __int64 &to);
 	bool keepAlive();
 	size_t contentLength(); /* 请求头中的 Content-Length 字段的值 */
-	__int64 startTime() { return _startTime; }
-
 	std::string getHeader();
-
 	bool isValid();
-	size_t headerSize();
-	size_t size();
-	size_t read(byte* buf, size_t len);
-	bool eof();
-	
-	int run(conn_id_t connId, iocp_key_t clientSock, size_t timeout);
-	bool stop(int ec);
-	bool reset();
+	IPipe* getPostData();
+	void nextRequest();
+	void statistics(__int64* bytesRecved, __int64* bytesSent);
 };

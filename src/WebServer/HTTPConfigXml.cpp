@@ -1,5 +1,5 @@
 #include "StdAfx.h"
-#include "HTTPConfig.h"
+#include "HTTPConfigXml.h"
 #include "XmlDocument.h"
 
 /*
@@ -46,17 +46,17 @@
 	</settings>
 */
 
-HTTPConfig::HTTPConfig()
+HTTPConfigXml::HTTPConfigXml()
 	: _curFcgiServerXmlHandle(NULL)
 {
 }
 
 
-HTTPConfig::~HTTPConfig()
+HTTPConfigXml::~HTTPConfigXml()
 {
 }
 
-bool HTTPConfig::load(const std::string &fileName)
+bool HTTPConfigXml::load(const std::string &fileName)
 {
 	if(_xmlDoc.Load(fileName.c_str(), true))
 	{
@@ -68,12 +68,12 @@ bool HTTPConfig::load(const std::string &fileName)
 	}
 }
 
-bool HTTPConfig::save(const std::string &fileName)
+bool HTTPConfigXml::save(const std::string &fileName)
 {
 	return _xmlDoc.Save(fileName.c_str());
 }
 
-bool HTTPConfig::get(const std::string &path, std::string &v)
+bool HTTPConfigXml::get(const std::string &path, std::string &v)
 {
 	XMLHANDLE h = _xmlDoc.GetNode(path.c_str());
 	if(h)
@@ -87,7 +87,7 @@ bool HTTPConfig::get(const std::string &path, std::string &v)
 	}
 }
 
-bool HTTPConfig::set(const std::string &path, const std::string &v)
+bool HTTPConfigXml::set(const std::string &path, const std::string &v)
 {
 	XMLHANDLE h = _xmlDoc.GetNode(path.c_str(), true);
 	if(h)
@@ -100,7 +100,7 @@ bool HTTPConfig::set(const std::string &path, const std::string &v)
 	}
 }
 
-std::string HTTPConfig::docRoot()
+std::string HTTPConfigXml::docRoot()
 {
 	std::string v;
 	if(get("/settings/general/docRoot", v)) return v;
@@ -112,12 +112,12 @@ std::string HTTPConfig::docRoot()
 
 }
 
-bool HTTPConfig::setDocRoot(const std::string &str)
+bool HTTPConfigXml::setDocRoot(const std::string &str)
 {
 	return set("/settings/general/docRoot", str);
 }
 
-std::string HTTPConfig::tmpRoot()
+std::string HTTPConfigXml::tmpRoot()
 {
 	std::string v;
 	if(get("/settings/general/tmpRoot", v)) return v;
@@ -128,12 +128,12 @@ std::string HTTPConfig::tmpRoot()
 	return "tmp";
 }
 
-bool HTTPConfig::setTmpRoot(const std::string &str)
+bool HTTPConfigXml::setTmpRoot(const std::string &str)
 {
 	return set("/settings/general/tmpRoot", str);
 }
 
-std::string HTTPConfig::defaultFileNames()
+std::string HTTPConfigXml::defaultFileNames()
 {
 	std::string v;
 	if(get("/settings/general/defaultFileNames", v)) return v;
@@ -144,12 +144,12 @@ std::string HTTPConfig::defaultFileNames()
 	return "index.html,default.html,index.php,default.php";
 }
 
-bool HTTPConfig::setDefaultFileNames(const std::string &str)
+bool HTTPConfigXml::setDefaultFileNames(const std::string &str)
 {
 	return set("/settings/general/defaultFileNames", str);
 }
 
-std::string HTTPConfig::ip()
+std::string HTTPConfigXml::ip()
 {
 	std::string v;
 	if(get("/settings/general/serverIP", v)) return v;
@@ -160,12 +160,12 @@ std::string HTTPConfig::ip()
 	return "";
 }
 
-bool HTTPConfig::setIp(const std::string &str)
+bool HTTPConfigXml::setIp(const std::string &str)
 {
 	return set("/settings/general/serverIP", str);
 }
 
-u_short HTTPConfig::port()
+u_short HTTPConfigXml::port()
 {
 	std::string v;
 	if(get("/settings/general/serverPort", v))
@@ -179,14 +179,14 @@ u_short HTTPConfig::port()
 	return 80;
 }
 
-bool HTTPConfig::setPort(u_short p)
+bool HTTPConfigXml::setPort(u_short p)
 {
 	char portStr[100] = {0};
 	sprintf(portStr, "%d", p);
 	return set("/settings/general/serverPort", portStr);
 }
 
-bool HTTPConfig::dirVisible()
+bool HTTPConfigXml::dirVisible()
 {
 	std::string v;
 	if(get("/settings/general/directoryVisible", v))
@@ -200,12 +200,12 @@ bool HTTPConfig::dirVisible()
 	return false;
 }
 
-bool HTTPConfig::setDirVisible(bool visible)
+bool HTTPConfigXml::setDirVisible(bool visible)
 {
 	return set("/settings/general/directoryVisible", visible ? "yes" : "no");
 }
 
-bool HTTPConfig::autoRun()
+bool HTTPConfigXml::autoRun()
 {
 	std::string v;
 	if(get("/settings/general/autoRun", v))
@@ -219,12 +219,12 @@ bool HTTPConfig::autoRun()
 	return false;
 }
 
-bool HTTPConfig::setAutoRun(bool yes)
+bool HTTPConfigXml::setAutoRun(bool yes)
 {
 	return set("/settings/general/autoRun", yes ? "yes" : "no");
 }
 
-size_t HTTPConfig::maxConnections()
+size_t HTTPConfigXml::maxConnections()
 {
 	std::string v;
 	if(get("/settings/general/maxConnections", v))
@@ -238,14 +238,14 @@ size_t HTTPConfig::maxConnections()
 	return 5000;
 }
 
-bool HTTPConfig::setMaxConnections(size_t n)
+bool HTTPConfigXml::setMaxConnections(size_t n)
 {
 	char str[100] = {0};
 	sprintf(str, "%d", n);
 	return set("/settings/general/maxConnections", str);
 }
 
-size_t HTTPConfig::maxConnectionsPerIp()
+size_t HTTPConfigXml::maxConnectionsPerIp()
 {
 	std::string v;
 	if(get("/settings/general/maxConnectionsPerIP", v))
@@ -259,14 +259,14 @@ size_t HTTPConfig::maxConnectionsPerIp()
 	return 0;
 }
 
-bool HTTPConfig::setMaxConnectionsPerIp(size_t n)
+bool HTTPConfigXml::setMaxConnectionsPerIp(size_t n)
 {
 	char str[100] = {0};
 	sprintf(str, "%d", n);
 	return set("/settings/general/maxConnectionsPerIP", str);
 }
 
-size_t HTTPConfig::maxConnectionSpeed()
+size_t HTTPConfigXml::maxConnectionSpeed()
 {
 	std::string v;
 	if(get("/settings/general/maxSpeed", v))
@@ -280,14 +280,14 @@ size_t HTTPConfig::maxConnectionSpeed()
 	return 0;
 }
 
-bool HTTPConfig::setMaxConnectionSpeed(size_t n)
+bool HTTPConfigXml::setMaxConnectionSpeed(size_t n)
 {
 	char str[100] = {0};
 	sprintf(str, "%d", n);
 	return set("/settings/general/maxSpeed", str);
 }
 
-size_t HTTPConfig::sessionTimeout()
+size_t HTTPConfigXml::sessionTimeout()
 {
 	std::string v;
 	if(get("/settings/general/sessionTimeout", v))
@@ -301,14 +301,14 @@ size_t HTTPConfig::sessionTimeout()
 	return 0;
 }
 
-bool HTTPConfig::setSessionTimeout(size_t n)
+bool HTTPConfigXml::setSessionTimeout(size_t n)
 {
 	char str[100] = {0};
 	sprintf(str, "%d", n);
 	return set("/settings/general/sessionTimeout", str);
 }
 
-size_t HTTPConfig::sendTimeout()
+size_t HTTPConfigXml::sendTimeout()
 {
 	std::string v;
 	if(get("/settings/general/sendTimeout", v))
@@ -322,14 +322,14 @@ size_t HTTPConfig::sendTimeout()
 	return 5000;
 }
 
-bool HTTPConfig::setSendTimeout(size_t n)
+bool HTTPConfigXml::setSendTimeout(size_t n)
 {
 	char str[100] = {0};
 	sprintf(str, "%d", n);
 	return set("/settings/general/sendTimeout", str);
 }
 
-size_t HTTPConfig::keepAliveTimeout()
+size_t HTTPConfigXml::keepAliveTimeout()
 {
 	std::string v;
 	if(get("/settings/general/keepAliveTimeout", v))
@@ -343,14 +343,14 @@ size_t HTTPConfig::keepAliveTimeout()
 	return 15000;
 }
 
-bool HTTPConfig::setKeepAliveTimeout(size_t n)
+bool HTTPConfigXml::setKeepAliveTimeout(size_t n)
 {
 	char str[100] = {0};
 	sprintf(str, "%d", n);
 	return set("/settings/general/keepAliveTimeout", str);
 }
 
-size_t HTTPConfig::recvTimeout()
+size_t HTTPConfigXml::recvTimeout()
 {
 	std::string v;
 	if(get("/settings/general/recvTimeout", v))
@@ -364,14 +364,14 @@ size_t HTTPConfig::recvTimeout()
 	return 5000;
 }
 
-bool HTTPConfig::setRecvTimeout(size_t n)
+bool HTTPConfigXml::setRecvTimeout(size_t n)
 {
 	char str[100] = {0};
 	sprintf(str, "%d", n);
 	return set("/settings/general/recvTimeout", str);
 }
 
-bool fill_fcgi_server(XMLDocument &xmlDoc, XMLHANDLE hServer, fcgi_server_t *serverInf)
+bool fill_fcgi_server(XMLDocument &xmlDoc, XMLHANDLE hServer, fcgi_server_ctx_t *serverInf)
 {
 	XMLHANDLE h = xmlDoc.GetChildByName(hServer, "name");
 	strncpy(serverInf->name, xmlDoc.GetContent(h).c_str(), MAX_PATH);
@@ -400,7 +400,7 @@ bool fill_fcgi_server(XMLDocument &xmlDoc, XMLHANDLE hServer, fcgi_server_t *ser
 	return true;
 }
 
-bool HTTPConfig::getFirstFcgiServer(fcgi_server_t *serverInf)
+bool HTTPConfigXml::getFirstFcgiServer(fcgi_server_ctx_t *serverInf)
 {
 	XMLHANDLE h = _xmlDoc.GetNode("/settings/fcgi/server");
 	if(!h)
@@ -417,7 +417,7 @@ bool HTTPConfig::getFirstFcgiServer(fcgi_server_t *serverInf)
 	}
 }
 
-bool HTTPConfig::getNextFcgiServer(fcgi_server_t *serverInf)
+bool HTTPConfigXml::getNextFcgiServer(fcgi_server_ctx_t *serverInf)
 {
 	// 在 xml 文件中找到下一个 server 描述
 	while(_curFcgiServerXmlHandle)
@@ -438,7 +438,7 @@ bool HTTPConfig::getNextFcgiServer(fcgi_server_t *serverInf)
 	}
 }
 
-bool HTTPConfig::addFcgiServer(const fcgi_server_t *serverInf)
+bool HTTPConfigXml::addFcgiServer(const fcgi_server_ctx_t *serverInf)
 {
 	XMLHANDLE h = _xmlDoc.GetNode("/settings/fcgi", true);
 	if(!h) return false;
@@ -477,7 +477,7 @@ bool HTTPConfig::addFcgiServer(const fcgi_server_t *serverInf)
 	return true;
 }
 
-bool HTTPConfig::removeFcgiServer(const std::string &name)
+bool HTTPConfigXml::removeFcgiServer(const std::string &name)
 {
 	XMLHANDLE hFcgi = _xmlDoc.GetNode("/settings/fcgi", true);
 	XMLHANDLE hChild = _xmlDoc.FirstChild(hFcgi);
@@ -497,7 +497,7 @@ bool HTTPConfig::removeFcgiServer(const std::string &name)
 	return false;
 }
 
-bool HTTPConfig::updateFcgiServer(const std::string &name, const fcgi_server_t *serverInf)
+bool HTTPConfigXml::updateFcgiServer(const std::string &name, const fcgi_server_ctx_t *serverInf)
 {
 	/* 等XMLDocument 类实现 XPath 之后就不用那么麻烦了 */
 	XMLHANDLE hFcgi = _xmlDoc.GetNode("/settings/fcgi", true);
@@ -556,7 +556,7 @@ bool HTTPConfig::updateFcgiServer(const std::string &name, const fcgi_server_t *
 	return false;
 }
 
-bool HTTPConfig::screenLog()
+bool HTTPConfigXml::screenLog()
 {
 	std::string v;
 	if(get("/settings/log/screenLog", v))
@@ -570,12 +570,12 @@ bool HTTPConfig::screenLog()
 	return true;
 }
 
-bool HTTPConfig::enableScreenLog(bool enabled)
+bool HTTPConfigXml::enableScreenLog(bool enabled)
 {
 	return set("/settings/log/screenLog", enabled ? "on" : "off");
 }
 
-std::string HTTPConfig::logFileName()
+std::string HTTPConfigXml::logFileName()
 {
 	std::string v;
 	if(get("/settings/log/fileName", v))
@@ -589,12 +589,12 @@ std::string HTTPConfig::logFileName()
 	return "log\\http.log";
 }
 
-bool HTTPConfig::setLogFileName(const std::string &fileName)
+bool HTTPConfigXml::setLogFileName(const std::string &fileName)
 {
 	return set("/settings/log/fileName", fileName);
 }
 
-slogger::LogLevel HTTPConfig::logLevel()
+slogger::LogLevel HTTPConfigXml::logLevel()
 {
 	std::string v;
 	if(get("/settings/log/level", v))
@@ -639,7 +639,7 @@ slogger::LogLevel HTTPConfig::logLevel()
 	return LL_INFO;
 }
 
-bool HTTPConfig::setLogLevel(slogger::LogLevel ll)
+bool HTTPConfigXml::setLogLevel(slogger::LogLevel ll)
 {
 	std::string level;
 	if(LL_ALL == ll)

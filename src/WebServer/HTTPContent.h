@@ -7,6 +7,7 @@
 */
 
 #pragma once
+#include "HTTPLib.h"
 
 /*
 * HTTPContent
@@ -17,56 +18,42 @@
 *
 */
 
-#include "HTTPDef.h"
-#include "memfile.h"
+#define CONTENT_TYPE_FILE 1
+#define CONTENT_TYPE_TEXT 2
+#define CONTENT_TYPE_BINARY 3
+#define CONTENT_TYPE_HTML 4
 
-#define OPEN_NONE 0
-#define OPEN_FILE 1
-#define OPEN_TEXT 2
-#define OPEN_BINARY 3
-#define OPEN_HTML 4
-#define OPEN_DIR 5
-
-
-class HTTPContent : public INoCopy
+class HTTPContent : public IPipe
 {
+private:
+	IPipe *_content;
+	std::string _contentType;
+	std::string _contentRange;
+	std::string _etag;
+	std::string _lastModify;
+	bool _acceptRanges;
+	__int64 _contentLength;
+
+	size_t puts(const char* str);
+
+protected:
+	// from pipe
+	size_t _read(void* buf, size_t len);
+	size_t _pump(reader_t reader, size_t maxlen);
+	__int64 _size();
+
 public:
 	HTTPContent();
 	virtual ~HTTPContent();
-
-protected:
-	int _openType;
-	std::string _contentType;
-
-	std::string _fileName;
-	WINFile _file;
-	struct _stat32i64 _fileInf;
-
-	memfile _memfile;
-	
-	__int64 _from;
-	__int64 _to;
-
-	std::string getContentTypeFromFileName(const char* fileName);
-	bool writable();
-
-public:
 	bool open(const std::string &fileName, __int64 from = 0, __int64 to = 0); /* 打开一个只读文件 */
 	bool open(const std::string &urlStr, const std::string &filePath); /* 打开一个目录 */
-	bool open(const char* buf, int len, int type); /* 打开一段 mem buffer */
+	bool open(const char* buf, size_t len, int type); /* 打开一段 mem buffer */
 	void close();
 
-	std::string contentType();
+	std::string& contentType();
+	std::string& contentRange();
 	__int64 contentLength();
-	std::string lastModified();
-	std::string etag();
-	std::string contentRange();
-	
-	bool isFile();
-	bool isOpen();
-	bool eof();
-	
-	size_t read(void* buf, size_t len);
-	size_t write(const void* buf, size_t len);
-	size_t writeString(const char* str);
+	std::string& lastModified();
+	std::string& etag();
+	bool acceptRanges();
 };

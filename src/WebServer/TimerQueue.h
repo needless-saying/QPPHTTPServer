@@ -44,6 +44,12 @@ public:
 * 另外有一个专门的操作队列.
 * 添加/修改/删除操作时,在把操作类型放入操作队列中,然后唤醒工作线程.
 * 工作线程一次处理完所有操作队列中排队的操作.
+*
+* 2014-3-19 - V0.3
+* 1. 取消操作队列,直接修改定时器队列.
+* 2. 修正删除最后一个定时器时正好该定时器超时的临界状态_curTimer指针失效BUG.
+* 3. changTimer()函数现在可用.
+* 4. 运用"定时器工作状态"的概念设计定时器队列,现在逻辑上应该更好理解一点.
 */
 
 class TimerQueue
@@ -52,9 +58,8 @@ public:
 	/*
 	* 类型定义
 	*/
-	typedef void (__stdcall *timer_func_t)(void*, unsigned char);
 	typedef void* timer_t;
-	
+	typedef void (*timer_func_t)(timer_t, void*);
 
 protected:
 
@@ -69,22 +74,18 @@ protected:
 		bool autoDelete;
 	};
 	typedef std::list<timer_desc_t*> timer_list_t;
-	typedef std::pair<timer_desc_t*, int> opp_t;
-	typedef std::vector<opp_t> opp_list_t;
 	
 	/*
 	* 自定义TimerQueue
 	*/
 	HANDLE _waitableTimer; /* 系统定时器对象 */
 	uintptr_t _timerThread; /* 定时器工作线程 */
-	int _wakeupType;	/* 工作线程被唤醒的原因 */
-	bool _stop; /* 是否停止定时器队列 */
+	int _state;	/* 定时器队列的工作状态[正常TIMER/重置定时器/退出] */
 
 	timer_list_t* _timerList; /* 定时器对象队列 */
-	timer_desc_t* _curTimer;
+	timer_desc_t* _curTimer; 
 	Lock* _lock; /* 同步锁 */
 	HighResolutionTimer _hrt; /* 高精度计时器 */
-	opp_list_t* _oppList; /* 操作队列 */
 
 	/* 
 	* 定时器缓存池 
@@ -111,12 +112,10 @@ protected:
 	*/
 	int setNextTimer(); /* 计算定时器触发的时间 */
 	timer_desc_t* getFirstTimer();
-	bool isFirstTimer(timer_desc_t* timerPtr);
 	bool isValidTimer(timer_desc_t* timerPtr);
 	bool inqueue(timer_desc_t* timerPtr); /* 如果需要重新设置定时器则返回true,否则返回false */
 	void wakeup();	/* 唤醒工作线程 */
-	void oppAcquire(timer_desc_t* timerPtr, int oppType); /* 排队操作 */
-	void oppExecute(); /* 执行操作 */
+	void oppAcquire(timer_desc_t* timerPtr, int oppType);
 
 public:
 	TimerQueue(size_t poolSize = 128);
