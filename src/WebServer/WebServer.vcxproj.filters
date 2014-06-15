@@ -100,6 +100,12 @@
     <ClCompile Include="FCGITransformer.cpp">
       <Filter>FCGI</Filter>
     </ClCompile>
+    <ClCompile Include="ChunkTransformer.cpp">
+      <Filter>Pipes</Filter>
+    </ClCompile>
+    <ClCompile Include="FCGIConnection.cpp">
+      <Filter>FCGI</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Pipes\Pipe.h">
@@ -183,6 +189,12 @@
       <Filter>Pipes</Filter>
     </ClInclude>
     <ClInclude Include="FCGITransformer.h">
+      <Filter>FCGI</Filter>
+    </ClInclude>
+    <ClInclude Include="ChunkTransformer.h">
+      <Filter>Pipes</Filter>
+    </ClInclude>
+    <ClInclude Include="FCGIConnection.h">
       <Filter>FCGI</Filter>
     </ClInclude>
   </ItemGroup>

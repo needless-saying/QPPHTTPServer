@@ -18,16 +18,21 @@
 * HTTPResponseHeader 用来生成 HTTP 响应头
 */
 
-class HTTPResponseHeader : public BufferPipe
+class HTTPResponseHeader : public IPipe
 {
 private:
 	typedef std::list<std::pair<std::string, std::string>> fields_t;
 	fields_t _headers;	// 响应头的关联数组
 	int _resCode; // 响应码
+	BufferPipe _buffer;
 
 	std::string getFirstLine(); // 根据制定的 Servercode 返回对应的 HTTP响应头的第一行,包括换行符.
 	size_t puts(const std::string &str);
 	fields_t::iterator find(const std::string &name);
+
+	size_t _read(void* buf, size_t len);
+	size_t _pump(reader_t reader, size_t maxlen);
+	__int64 _size();
 
 public:
 	HTTPResponseHeader();

@@ -3,7 +3,7 @@
 
 
 IPipeTransformer::IPipeTransformer(size_t packageSize)
-	: _bp(SIZE_MAX, 4096), _packageSize(packageSize), _packageBuf(NULL)
+	: _bp(SIZE_MAX, 1024), _packageSize(packageSize), _packageBuf(NULL)
 {
 }
 

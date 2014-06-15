@@ -276,9 +276,8 @@ int HTTPServer::stop()
 		}
 		for(auto itr = _stmList.begin(); itr != _stmList.end(); ++itr)
 		{
-#ifdef DEBUG
 			LOGGER_DEBUG(theLogger, _T("强制卸载状态机") << AtoT(typeid(*(itr->second)).name()) << _T("\r\n")); 
-#endif
+			
 			// 卸载状态机
 			_scheduler->uninstall(itr->first);
 
@@ -297,6 +296,7 @@ int HTTPServer::stop()
 		}
 		_responderFactoryList.clear();
 
+		// 销毁调度器
 		destroy_scheduler(_scheduler);
 		_scheduler = NULL;
 

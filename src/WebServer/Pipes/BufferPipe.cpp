@@ -93,6 +93,7 @@ void BufferPipe::trunc()
 	_wrPos = 0;
 }
 
+
 /*
 * BufferPipe 的内部缓冲区指针
 */

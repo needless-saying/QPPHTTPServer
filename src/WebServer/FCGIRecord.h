@@ -63,7 +63,7 @@ public:
 	FCGIRecord& operator = (const FCGIRecord& rh);
 	size_t assign(const void* buf, size_t len);
 	size_t assign(const Buffer* buf);
-	size_t assign(IPipe* p);
+	//size_t assign(IPipe* p);
 	const void* buffer() const;
 	size_t size() const;
 

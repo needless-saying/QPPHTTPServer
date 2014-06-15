@@ -928,3 +928,13 @@ write 逻辑: 缓存读取,写入next, 变换预定的最大长度, 缓存结果, 写入缓存, goto begi
 3. 思路: 反过来操作, 要从一个 pipe 中读取时,提供缓冲区,让那个pipe主动写; 要写时,同样,让目标缓冲区主动读. 这样就不会出现数据从一个管道中读出,但是写入目标管道时失败导致的数据丢失.
 并且目标管道主动读写可以根据目标管道各自的特点优化,效率更高.
 4. 对用户只提供 pump(IPipe* src, maxlen) 和 push(dest maxlen), 不再提供直接 read/write buffer(通过BufferPipe来完成同样的功能).
+
+2014.6.5
+1. 按照软件设计的原则, IPipe 派生类只要提供 _read _write _size _space 最好. 只是多几次内存拷贝.
+
+2014.6.11
+1. 如果还是由 FCGIResponder 处理一切,那么只能写出 V0.2那样的恶心代码.
+2. 编写一个单独的状态机 FCGIConnection ,负责 发送/接收 FCIG 服务器数据. 提供一个 IPipe 和 wait 函数有数据时可以通知(不一定要用同步对象实现,FCGIFactory 可以创建一个等待队列,某个 FCIGConnection 有数据时,直接唤醒它对应的 FCGIResponder)
+3. HTTPResponder 改进一下可以接收一个 FCIGConnection 提供给的 IPipe 数据源. 这样 FCGIResponder 就没有存在的必要了.
+4. 由于 FCGIConnection 是长期存活的,所以它所用的缓冲区/临时文件也长期存活,效率提高了.
+5. 要有机制避免临时文件一直增大的问题

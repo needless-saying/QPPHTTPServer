@@ -92,7 +92,7 @@ static void format_range(std::string& str, __int64 fr, __int64 to, __int64 sz)
 	str = szRanges;
 }
 
-static void build_etag_string(std::string str, const void* buf, size_t len)
+static void build_etag_string(std::string& str, const void* buf, size_t len)
 {
 	char szLength[201] = {0};
 	ltoa(len, szLength, 10);

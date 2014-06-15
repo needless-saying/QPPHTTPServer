@@ -144,7 +144,7 @@ std::string format_http_date(__int64* ltime);
 std::string to_hex(const unsigned char* pData, int nSize);
 std::string decode_url(const std::string& inputStr);
 bool map_method(HTTP_METHOD md, char *str);
-int http_request_end(const char *data, size_t len);
+int http_header_end(const char *data, size_t len);
 std::string get_field(const char* buf, const char* key);
 void get_file_ext(const std::string &fileName, std::string &ext);
 bool match_file_ext(const std::string &ext, const std::string &extList);

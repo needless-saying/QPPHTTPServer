@@ -31,7 +31,7 @@ bool HTTPRequest::isValid()
 		size_t headerLen = 0;
 		getHeaderBuffer(&header, &headerLen);
 		
-		if(http_request_end(header, headerLen) > 0)
+		if(http_header_end(header, headerLen) > 0)
 		{
 			if(contentLength() == 0 || (_httpPostData && _httpPostData->size() == contentLength()))
 			{
@@ -60,7 +60,7 @@ void HTTPRequest::getHeaderBuffer(const char** buf, size_t *len)
 	if(_httpHeader)
 	{
 		*buf = (const char*)_httpHeader->buffer();
-		*len = (size_t)_httpHeader->size();
+		*len = (size_t)_httpHeader->size() - 1;
 	}
 	else
 	{
@@ -323,7 +323,7 @@ bool HTTPRequest::step1(IOAdapter* adp, int ev, stm_result_t* res)
 	else
 	{
 		// 判断是否已经读取到完整的请求头
-		int headerlen = http_request_end((const char*)_cachePipe->buffer(), (size_t)_cachePipe->size());
+		int headerlen = http_header_end((const char*)_cachePipe->buffer(), (size_t)_cachePipe->size());
 		if(headerlen < 0)
 		{
 			// 继续接收请求头

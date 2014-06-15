@@ -3,7 +3,7 @@
 
 
 HTTPResponseHeader::HTTPResponseHeader()
-	: BufferPipe(MAX_RESPONSEHEADERSIZE, K_BYTES), _resCode(SC_UNKNOWN)
+	: _buffer(MAX_RESPONSEHEADERSIZE, K_BYTES), _resCode(SC_UNKNOWN)
 {
 }
 
@@ -157,7 +157,7 @@ bool HTTPResponseHeader::getField(const std::string &name, std::string &val)
 bool HTTPResponseHeader::format()
 {
 	// 清空缓存
-	BufferPipe::trunc();
+	_buffer.trunc();
 
 	// 输出第一行
 	puts(getFirstLine());
@@ -173,12 +173,13 @@ bool HTTPResponseHeader::format()
 
 	// 写入一个空行表示结束
 	puts("\r\n");
+
 	return true;
 }
 
 size_t HTTPResponseHeader::puts(const std::string &str)
 {
-	return write(str.c_str(), str.size());
+	return _buffer.write(str.c_str(), str.size());
 }
 
 size_t HTTPResponseHeader::addDefaultFields()
@@ -192,21 +193,30 @@ size_t HTTPResponseHeader::addDefaultFields()
 	return 2;
 }
 
-//size_t HTTPResponseHeader::write(const void* buf, size_t len)
-//{
-//	/* 只允许通过 add 添加域 */
-//	assert(0);
-//	return 0;
-//}
-
 void HTTPResponseHeader::reset()
 {
 	_headers.clear();
-	BufferPipe::trunc();
+	_buffer.trunc();
 	_resCode = SC_UNKNOWN;
 }
 
 std::string HTTPResponseHeader::getHeader()
 {
-	return std::string(reinterpret_cast<const char*>(buffer()), (int)size());
+	return std::string((const char*)_buffer.buffer(), (size_t)_buffer.size());
+}
+
+__int64 HTTPResponseHeader::_size()
+{
+	return _buffer.size();
+}
+
+size_t HTTPResponseHeader::_read(void* buf, size_t len)
+{
+	return _buffer.read(buf, len);
+}
+
+size_t HTTPResponseHeader::_pump(reader_t reader, size_t maxlen)
+{
+	// 只读
+	return 0;
 }

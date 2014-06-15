@@ -121,6 +121,8 @@
   <ItemGroup>
     <ClCompile Include="ATW.cpp" />
     <ClCompile Include="ChildView.cpp" />
+    <ClCompile Include="ChunkTransformer.cpp" />
+    <ClCompile Include="FCGIConnection.cpp" />
     <ClCompile Include="FCGIFactory.cpp" />
     <ClCompile Include="FCGIRecord.cpp" />
     <ClCompile Include="FCGITransformer.cpp" />
@@ -160,7 +162,9 @@
   <ItemGroup>
     <ClInclude Include="ATW.h" />
     <ClInclude Include="ChildView.h" />
+    <ClInclude Include="ChunkTransformer.h" />
     <ClInclude Include="fastcgi.h" />
+    <ClInclude Include="FCGIConnection.h" />
     <ClInclude Include="FCGIFactory.h" />
     <ClInclude Include="FCGIRecord.h" />
     <ClInclude Include="FCGITransformer.h" />

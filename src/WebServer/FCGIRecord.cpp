@@ -114,45 +114,45 @@ size_t FCGIRecord::assign(const void* buf, size_t len)
 	}
 }
 
-size_t FCGIRecord::assign(IPipe* p)
-{
-	//if(p->size() < FCGI_HEADER_LEN)
-	//{
-	//	// 长度不足
-	//	return 0;
-	//}
-	//else
-	//{
-	//	FCGI_Header header;
-	//	p->peek(&header, FCGI_HEADER_LEN);
-
-	//	size_t recordLen = getContentLength(header) + header.paddingLength + FCGI_HEADER_LEN;
-	//	if(p->size() < recordLen)
-	//	{
-	//		// 长度不足
-	//		return 0;
-	//	}
-	//	else
-	//	{
-	//		void* buf = NULL;
-	//		size_t lockedLen = _buffer.lock(&buf, recordLen);
-	//		if(lockedLen < recordLen)
-	//		{
-	//			// 空间不足
-	//			_buffer.unlock(0);
-	//			assert(0);
-	//			return 0;
-	//		}
-	//		else
-	//		{
-	//			p->read(buf, recordLen);
-	//			_buffer.unlock(recordLen);
-	//			return recordLen;
-	//		}
-	//	}
-	//}
-	return 0;
-}
+//size_t FCGIRecord::assign(IPipe* p)
+//{
+//	//if(p->size() < FCGI_HEADER_LEN)
+//	//{
+//	//	// 长度不足
+//	//	return 0;
+//	//}
+//	//else
+//	//{
+//	//	FCGI_Header header;
+//	//	p->peek(&header, FCGI_HEADER_LEN);
+//
+//	//	size_t recordLen = getContentLength(header) + header.paddingLength + FCGI_HEADER_LEN;
+//	//	if(p->size() < recordLen)
+//	//	{
+//	//		// 长度不足
+//	//		return 0;
+//	//	}
+//	//	else
+//	//	{
+//	//		void* buf = NULL;
+//	//		size_t lockedLen = _buffer.lock(&buf, recordLen);
+//	//		if(lockedLen < recordLen)
+//	//		{
+//	//			// 空间不足
+//	//			_buffer.unlock(0);
+//	//			assert(0);
+//	//			return 0;
+//	//		}
+//	//		else
+//	//		{
+//	//			p->read(buf, recordLen);
+//	//			_buffer.unlock(recordLen);
+//	//			return recordLen;
+//	//		}
+//	//	}
+//	//}
+//	return 0;
+//}
 
 size_t FCGIRecord::assign(const Buffer* buf)
 {

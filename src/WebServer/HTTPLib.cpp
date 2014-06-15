@@ -131,7 +131,7 @@ bool map_method(HTTP_METHOD md, char *str)
 }
 
 /* 判断一个请求头是否已经结束(两个连续换行),返回请求头长度(含2个换行符) */
-int http_request_end(const char *data, size_t len)
+int http_header_end(const char *data, size_t len)
 {
 	if(len < 4) return -1;
 	for(size_t i = 3; i < len; ++i)
